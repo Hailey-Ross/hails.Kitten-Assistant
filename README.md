@@ -3,8 +3,10 @@
 A tiny desktop buddy for Windows. A kitten sits at a little computer on top of your
 taskbar and shows what your background jobs are doing.
 
-- **Busy:** the kitten types away and looks at its screen. Code scrolls on the screen,
-  the mug steams, and a speech bubble shows the task and how long it has been running.
+- **Busy:** the kitten types away and looks at its screen, the mug steams, and a speech
+  bubble shows the task and how long it has been running. Each new status line gets a
+  screen picked at random: scrolling code, progress bars, an equalizer, a spinning gear or
+  a line graph.
 - **Waiting:** a line that starts with `Waiting` (for example `Waiting: test results`).
   The kitten props its chin on a paw, drums the desk with the other, gives the
   hourglass on its screen a bored look and thinks "...".
@@ -149,6 +151,7 @@ kitten-assistant snapshot nap.png --bg 6a8caf
 ```
 
 `--time SECONDS` picks the animation moment. `--scale N` sets the size (default 2).
+`--screen N` picks the typing screen (0 code, 1 progress bars, 2 equalizer, 3 gear, 4 graph).
 Leave out `--bg` for a transparent PNG.
 
 ## How it works

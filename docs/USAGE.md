@@ -59,7 +59,7 @@ character that is not a letter, so `Waiting:`, `waiting...` and `WAITING for CI`
 
 | Mood | First word | What you see |
 |------|------------|--------------|
-| Busy | anything else | types away, code scrolls on the screen, the mug steams |
+| Busy | anything else | types away, the mug steams; the screen shows scrolling code, progress bars, an equalizer, a spinning gear or a line graph, picked at random each time the line changes (never the same twice in a row) |
 | Waiting | `Waiting`, `Wait` | chin propped on one paw, the other paw drums the desk, bored half-closed eyes that glance at the hourglass on the screen, "..." above its head, slow tail swish; the power light pulses amber |
 | Problem | `Failed`, `Fail`, `Error`, `Problem` | ears droop, a small frown, a blinking red X on a dark red screen, a red power light |
 | All done | (no word: a busy line turns idle) | for 2.5 seconds: paws up, little hops, sparkles, a green tick and "all done!", then the nap |
@@ -125,6 +125,7 @@ kitten-assistant help                 show the command summary (in a message box
 | `--time SECONDS`| snapshot       | which moment of the animation to draw (default 3.2)             |
 | `--bg RRGGBB`   | snapshot       | background colour as hex, for example `6a8caf`; default transparent |
 | `--done`        | snapshot       | draw the all-done moment (use with `--time 3.3`)               |
+| `--screen N`    | snapshot       | typing screen: 0 code (default), 1 progress bars, 2 equalizer, 3 gear, 4 line graph |
 
 Options go after the command: `kitten-assistant say "Backup" --status C:\jobs\status.txt`.
 

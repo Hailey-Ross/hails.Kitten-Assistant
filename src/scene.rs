@@ -92,6 +92,9 @@ impl Mood {
     }
 }
 
+/// Typing screens: scrolling code, progress bars, equalizer, gear, line graph.
+const SCREENS: usize = 5;
+
 /// Seconds the "all done!" moment lasts after busy turns idle.
 const CHEER_SECS: f64 = 2.5;
 
@@ -125,6 +128,8 @@ pub struct Scene {
     pub busy: bool,
     pub task: String,
     pub mood: Mood,
+    /// which typing screen shows (0..SCREENS), picked at random per status line
+    pub screen: usize,
     /// time (seconds) the current task started
     pub since: f64,
     /// time the last job finished (busy -> idle), for the "all done!" moment
@@ -155,6 +160,7 @@ impl Scene {
             busy: false,
             task: String::new(),
             mood: Mood::Busy,
+            screen: 0,
             since: 0.0,
             done_at: -100.0,
             rng: 0x2545_F491_4F6C_DD1D,
@@ -182,6 +188,9 @@ impl Scene {
         let busy = !s.is_empty() && !s.eq_ignore_ascii_case("idle");
         if busy && (!self.busy || s != self.task) {
             self.since = t - age.max(0.0);
+            // a new screen for the new line, never the same one twice in a row
+            let pick = (self.rand() * (SCREENS - 1) as f64) as usize;
+            self.screen = (self.screen + 1 + pick) % SCREENS;
         }
         // a job that ends without a problem gets a little celebration
         if self.busy && !busy && self.mood != Mood::Problem {
@@ -331,11 +340,16 @@ impl Scene {
         self.arms(&mut c, p);
         self.head(&mut c, p);
         if self.busy && self.mood == Mood::Waiting {
-            // the chin rests on this paw, so it sits in front of the head
-            let py = 181.0 - p.l.lift;
-            c.blob(&oval(p.l.x, py, PAW_W, 13.0), FUR);
-            for tx in [6.5, 10.0, 13.5] {
-                c.stroke(&line(p.l.x + tx, py + 0.8, p.l.x + tx, py + 4.2), INK.fade(0.8), 1.1);
+            // chin propped on an upright forearm: elbow on the keyboard, paw cupping the jaw,
+            // drawn in front of the head
+            let (px, py) = (CX - 33.0, p.hy + 12.0);
+            let arm = line(CX - 38.0, KY + 4.0, px + 8.0, py + 9.0);
+            c.stroke(&arm, INK, 14.5);
+            c.stroke(&arm, FUR, 10.5);
+            c.blob(&oval(px, py, 18.0, 15.0), FUR);
+            // toes curl in towards the face
+            for (dx, dy) in [(12.5, 3.5), (14.5, 7.0), (13.5, 10.5)] {
+                c.stroke(&line(px + dx, py + dy, px + dx + 3.5, py + dy), INK.fade(0.8), 1.1);
             }
         }
         self.sparkles(&mut c, p);
@@ -352,6 +366,60 @@ impl Scene {
             self.zzz(&mut c, tf, p);
         }
         self.bubble(&mut c, t, p);
+    }
+
+    /// The typing screens other than scrolling code (screen 0), picked at random per status line.
+    fn busy_screen(&self, c: &mut Canvas, t: f32) {
+        match self.screen {
+            1 => {
+                // three progress bars filling at their own pace
+                for i in 0..3 {
+                    let y = 133.0 + i as f32 * 15.0;
+                    let k = (t * (0.11 + 0.07 * i as f32) + i as f32 * 0.37).fract();
+                    c.fill(&rrect(207.0, y, 62.0, 7.0, 3.5), WHITE.fade(0.12));
+                    c.fill(&rrect(207.0, y, 6.0 + 56.0 * k, 7.0, 3.5), CODE[i]);
+                }
+            }
+            2 => {
+                // an equalizer
+                for i in 0..8 {
+                    let f = i as f32;
+                    let h = 5.0 + 32.0 * (t * (2.1 + 0.37 * f) + f * 1.7).sin().abs();
+                    c.fill(&rrect(206.0 + f * 8.4, 172.0 - h, 6.0, h, 2.0), CODE[i % 4]);
+                }
+            }
+            3 => {
+                // a spinning gear and loading dots
+                let (x, y, rot) = (238.0, 146.0, t * 1.6);
+                for k in 0..8 {
+                    let a = rot + k as f32 / 8.0 * 2.0 * PI;
+                    c.stroke(&line(x + a.cos() * 9.0, y + a.sin() * 9.0, x + a.cos() * 16.0, y + a.sin() * 16.0), CODE[1], 5.0);
+                }
+                c.fill(&circle(x, y, 11.5), CODE[1]);
+                c.fill(&circle(x, y, 4.5), SCREEN_ON);
+                let step = (t * 3.0) as i64 % 4;
+                for i in 0..3 {
+                    let a = if (i as i64) < step { 1.0 } else { 0.25 };
+                    c.fill(&circle(229.0 + i as f32 * 9.0, 172.0, 2.4), CODE[0].fade(a));
+                }
+            }
+            _ => {
+                // a line graph scrolling past
+                for gy in [136.0, 151.0, 166.0] {
+                    c.stroke(&line(203.0, gy, 273.0, gy), WHITE.fade(0.08), 1.0);
+                }
+                let pts: Vec<(f32, f32)> = (0..=20)
+                    .map(|i| {
+                        let x = 203.0 + i as f32 * 3.5;
+                        let u = i as f32 * 0.45 + t * 1.8;
+                        (x, 152.0 - 9.0 * u.sin() - 5.0 * (u * 2.3 + 1.0).sin())
+                    })
+                    .collect();
+                c.stroke(&polyline(&pts), CODE[2], 2.2);
+                let (lx, ly) = pts[pts.len() - 1];
+                c.fill(&circle(lx, ly, 2.6), CODE[0]);
+            }
+        }
     }
 
     /// Twinkling stars around the head during the "all done!" moment.
@@ -442,6 +510,8 @@ impl Scene {
         } else if mood.is_none() && p.cheer.is_some() {
             // a big green tick
             c.stroke(&polyline(&[(224.0, 151.0), (234.0, 161.0), (254.0, 139.0)]), GREEN, 5.0);
+        } else if self.busy && self.screen != 0 {
+            self.busy_screen(c, t);
         } else if self.busy {
             // code scrolls up as it is typed
             let lh = 8.0;
@@ -555,7 +625,12 @@ impl Scene {
 
     fn arms(&self, c: &mut Canvas, p: &Pose) {
         let rest_y = if self.busy { 181.0 } else { 179.0 };
+        // while waiting the left arm props the chin and is drawn after the head
+        let chin = self.busy && self.mood == Mood::Waiting;
         for (paw, sx) in [(p.l, -24.0), (p.r, 24.0)] {
+            if chin && sx < 0.0 {
+                continue;
+            }
             let py = rest_y - paw.lift;
             let arm = line(CX + sx, p.hy + 46.0, paw.x + PAW_W / 2.0, py + 5.0);
             c.stroke(&arm, INK, 14.5);

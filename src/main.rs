@@ -31,7 +31,8 @@ snapshot options:
   --time SECONDS   animation time to render (default 3.2)
   --minutes N      elapsed minutes shown in the bubble
   --bg RRGGBB      background colour (default: transparent)
-  --done           render the all-done moment";
+  --done           render the all-done moment
+  --screen N       typing screen 0-4 (code, progress, equalizer, gear, graph; default 0)";
 
 #[derive(Default)]
 struct Opts {
@@ -47,6 +48,7 @@ struct Opts {
     minutes: Option<f64>,
     bg: Option<String>,
     done: bool,
+    screen: Option<usize>,
 }
 
 fn parse() -> Result<Opts, String> {
@@ -66,6 +68,7 @@ fn parse() -> Result<Opts, String> {
             "--minutes" => o.minutes = Some(val()?.parse().map_err(|_| "bad --minutes")?),
             "--bg" => o.bg = Some(val()?),
             "--done" => o.done = true,
+            "--screen" => o.screen = Some(val()?.parse().map_err(|_| "bad --screen")?),
             "-h" | "--help" | "help" => return Err(USAGE.into()),
             _ if a.starts_with("--") => return Err(format!("unknown option {a}\n\n{USAGE}")),
             _ => positional.push(a),
@@ -158,6 +161,7 @@ fn snapshot(o: &Opts) -> Result<(), String> {
     let mut s = scene::Scene::new();
     s.set_status(o.busy.as_deref().unwrap_or("idle"), 0.0);
     s.since = -o.minutes.unwrap_or(0.0) * 60.0;
+    s.screen = o.screen.unwrap_or(0) % 5;
     if o.done {
         // the "all done!" moment, one second in
         s.set_status("job", 0.0);
