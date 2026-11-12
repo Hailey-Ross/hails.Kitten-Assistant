@@ -60,7 +60,7 @@ character that is not a letter, so `Waiting:`, `waiting...` and `WAITING for CI`
 | Mood | First word | What you see |
 |------|------------|--------------|
 | Busy | anything else | types away, the mug steams; the screen shows scrolling code, progress bars, an equalizer, a spinning gear or a line graph, picked at random each time the line changes (never the same twice in a row) |
-| Waiting | `Waiting`, `Wait` | chin propped on one paw, the other paw drums the desk, bored half-closed eyes that glance at the hourglass on the screen, "..." above its head, slow tail swish; the power light pulses amber |
+| Waiting | `Waiting`, `Wait` | chin propped on one paw, the other paw drums the desk, bored half-closed eyes that glance at the hourglass on the screen (the sand runs down, then the glass turns over), "..." above its head, slow tail swish; the power light pulses amber |
 | Problem | `Failed`, `Fail`, `Error`, `Problem` | ears droop, a small frown, a blinking red X on a dark red screen, a red power light |
 | All done | (no word: a busy line turns idle) | for 2.5 seconds: paws up, little hops, sparkles, a green tick and "all done!", then the nap |
 

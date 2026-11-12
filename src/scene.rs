@@ -488,20 +488,33 @@ impl Scene {
         c.fill(&screen, bg);
         c.clip(Some(&screen));
         if mood == Some(Mood::Waiting) {
-            // an hourglass whose sand runs down every three seconds
-            let k = ((t % 3.0) / 2.6).min(1.0);
-            let (x, top, mid, bot, hw) = (238.0, 136.0, 151.0, 166.0, 12.0);
+            // an hourglass: the sand runs down, then the glass turns over (the full bottom bulb
+            // becomes the top one, so the next run starts exactly where the turn ends)
+            const RUN: f32 = 2.4;
+            const TURN: f32 = 0.6;
+            let ph = t % (RUN + TURN);
+            let k = (ph / (RUN - 0.2)).min(1.0);
+            let turn = ((ph - RUN) / TURN).clamp(0.0, 1.0);
+            let ang = PI * turn * turn * (3.0 - 2.0 * turn);
+            let (x, mid, h, hw) = (238.0, 151.0, 14.0, 12.0);
+            let (ca, sa) = (ang.cos(), ang.sin());
+            let rot = |px: f32, py: f32| (x + (px - x) * ca - (py - mid) * sa, mid + (px - x) * sa + (py - mid) * ca);
+            let shape = |pts: &[(f32, f32)]| poly(&pts.iter().map(|&(px, py)| rot(px, py)).collect::<Vec<_>>());
+            let seg = |x1: f32, y1: f32, x2: f32, y2: f32| {
+                let (a, b) = (rot(x1, y1), rot(x2, y2));
+                line(a.0, a.1, b.0, b.1)
+            };
             let left = 1.0 - k;
-            c.fill(&poly(&[(x - hw * left, mid - 14.0 * left), (x + hw * left, mid - 14.0 * left), (x, mid)]), SAND);
-            c.fill(&poly(&[(x - hw, bot), (x + hw, bot), (x, bot - 12.0 * k)]), SAND);
+            c.fill(&shape(&[(x - hw * left, mid - h * left), (x + hw * left, mid - h * left), (x, mid)]), SAND);
+            c.fill(&shape(&[(x - hw, mid + h), (x + hw, mid + h), (x, mid + h - h * k)]), SAND);
             if k < 1.0 {
-                c.stroke(&line(x, mid, x, bot - 12.0 * k), SAND, 1.2);
+                c.stroke(&seg(x, mid, x, mid + h - h * k), SAND, 1.2);
             }
             let frame = CASE;
-            c.stroke(&poly(&[(x - hw, top), (x + hw, top), (x, mid)]), frame, 1.6);
-            c.stroke(&poly(&[(x, mid), (x + hw, bot), (x - hw, bot)]), frame, 1.6);
-            c.stroke(&line(x - hw - 3.0, top - 1.5, x + hw + 3.0, top - 1.5), frame, 2.6);
-            c.stroke(&line(x - hw - 3.0, bot + 1.5, x + hw + 3.0, bot + 1.5), frame, 2.6);
+            c.stroke(&shape(&[(x - hw, mid - h), (x + hw, mid - h), (x, mid)]), frame, 1.6);
+            c.stroke(&shape(&[(x, mid), (x + hw, mid + h), (x - hw, mid + h)]), frame, 1.6);
+            c.stroke(&seg(x - hw - 3.0, mid - h - 1.5, x + hw + 3.0, mid - h - 1.5), frame, 2.6);
+            c.stroke(&seg(x - hw - 3.0, mid + h + 1.5, x + hw + 3.0, mid + h + 1.5), frame, 2.6);
         } else if mood == Some(Mood::Problem) {
             // a blinking red X
             let a = if (t * 2.0).fract() < 0.5 { 1.0 } else { 0.55 };
@@ -733,7 +746,7 @@ impl Scene {
         let (Some(bold), Some(regular)) = (self.bold.as_ref(), self.regular.as_ref()) else { return };
         let (main, sub) = if self.busy {
             let m = ((t - self.since) / 60.0).max(0.0) as i64;
-            let (start, so_far) = if self.mood == Mood::Waiting { ("just started waiting", "waiting") } else { ("just started", "so far") };
+            let (start, so_far) = if self.mood == Mood::Waiting { ("just started", "waiting") } else { ("just started", "so far") };
             let sub = match m {
                 0 => start.to_string(),
                 1..=59 => format!("{m} min {so_far}"),
