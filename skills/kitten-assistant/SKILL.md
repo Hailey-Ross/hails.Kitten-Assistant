@@ -51,12 +51,20 @@ you are still working and on what.
 |------------------------------------------------|----------------------------------------------|
 | You start a task with more than a step or two  | a line naming the task                       |
 | You move to a new step or phase                | a new line for that step                     |
-| You wait on something long (build, test, download) | what you wait for, for example `Waiting: release build` |
-| You finish, stop on an error, or hand back to the user | `idle`                               |
+| You wait on something long (build, test, download, another machine) | a line starting with `Waiting`, for example `Waiting: release build` |
+| You finish and hand back to the user           | `idle` (the kitten cheers for a moment, then naps) |
+| You stop because something failed and the user has to look | a line starting with `Failed`, for example `Failed: release build` |
 | You ask the user a question and wait for the answer | `idle` (the kitten should not look busy while you are waiting on them) |
 
-Always end with `idle`. A kitten that keeps typing after you stopped tells the user something
-false. If a step fails, still set `idle` before you report the failure.
+The first word picks the kitten's mood: `Waiting` (or `Wait`) makes it wait with its chin on a
+paw and an hourglass on its screen; `Failed`, `Fail`, `Error` or `Problem` makes it look
+worried with a red X; anything else makes it type. Use the waiting line only while something
+of yours is really still running, and the failed line only for a failure the user needs to
+see; a step that failed and that you then fixed yourself is just your next step.
+
+Always end your turn with `idle`, or with the `Failed: ...` line when the turn ends on a
+failure. A kitten that keeps typing or waiting after you stopped tells the user something
+false. Your next task's first line replaces a failed line.
 
 Commands (add `--status "<path>"` if the setup check found one):
 

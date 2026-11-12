@@ -47,8 +47,27 @@ The running kitten reads its **status file** every 2 seconds and looks only at t
 | First line of the file                   | What the kitten does                                         |
 |------------------------------------------|--------------------------------------------------------------|
 | any text                                 | types; the bubble shows the text and the time since it began |
+| text starting with `Waiting` or `Wait`   | waits (see moods below); the bubble counts "N min waiting"   |
+| text starting with `Failed`, `Fail`, `Error` or `Problem` | looks worried (see moods below)             |
 | empty, only spaces, `idle` (any case)    | naps; the bubble says "napping... no jobs right now"         |
 | the file does not exist or can't be read | naps                                                         |
+
+### Moods
+
+The first word of a busy line picks how the kitten acts (any case; the word ends at the first
+character that is not a letter, so `Waiting:`, `waiting...` and `WAITING for CI` all count):
+
+| Mood | First word | What you see |
+|------|------------|--------------|
+| Busy | anything else | types away, code scrolls on the screen, the mug steams |
+| Waiting | `Waiting`, `Wait` | chin propped on one paw, the other paw drums the desk, bored half-closed eyes that glance at the hourglass on the screen, "..." above its head, slow tail swish; the power light pulses amber |
+| Problem | `Failed`, `Fail`, `Error`, `Problem` | ears droop, a small frown, a blinking red X on a dark red screen, a red power light |
+| All done | (no word: a busy line turns idle) | for 2.5 seconds: paws up, little hops, sparkles, a green tick and "all done!", then the nap |
+
+The all-done moment follows any busy or waiting line that turns idle, but not a problem line:
+a job that ended badly goes straight to sleep. To use the moods from a script, write
+`Waiting: ...` while you wait on something (a download, a review, another machine) and
+`Failed: ...` when a step fails, and leave the problem line up until someone has seen it.
 
 Details that matter when you write the file yourself:
 
@@ -105,6 +124,7 @@ kitten-assistant help                 show the command summary (in a message box
 | `--minutes N`   | snapshot       | elapsed minutes shown in the bubble                             |
 | `--time SECONDS`| snapshot       | which moment of the animation to draw (default 3.2)             |
 | `--bg RRGGBB`   | snapshot       | background colour as hex, for example `6a8caf`; default transparent |
+| `--done`        | snapshot       | draw the all-done moment (use with `--time 3.3`)               |
 
 Options go after the command: `kitten-assistant say "Backup" --status C:\jobs\status.txt`.
 
@@ -299,6 +319,9 @@ status line will look like:
 
 ```
 kitten-assistant snapshot busy.png --busy "Building release 1.2" --minutes 12 --bg 6a8caf
+kitten-assistant snapshot waiting.png --busy "Waiting: test results" --minutes 3 --time 4.2 --bg 6a8caf
+kitten-assistant snapshot problem.png --busy "Failed: release build" --bg 6a8caf
+kitten-assistant snapshot done.png --done --time 3.3 --bg 6a8caf
 kitten-assistant snapshot nap.png --bg 6a8caf
 kitten-assistant snapshot big.png --busy "Long text test" --scale 4
 ```

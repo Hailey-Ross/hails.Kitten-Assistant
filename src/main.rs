@@ -30,7 +30,8 @@ snapshot options:
   --busy TEXT      render the busy pose with TEXT (default: napping)
   --time SECONDS   animation time to render (default 3.2)
   --minutes N      elapsed minutes shown in the bubble
-  --bg RRGGBB      background colour (default: transparent)";
+  --bg RRGGBB      background colour (default: transparent)
+  --done           render the all-done moment";
 
 #[derive(Default)]
 struct Opts {
@@ -45,6 +46,7 @@ struct Opts {
     time: Option<f64>,
     minutes: Option<f64>,
     bg: Option<String>,
+    done: bool,
 }
 
 fn parse() -> Result<Opts, String> {
@@ -63,6 +65,7 @@ fn parse() -> Result<Opts, String> {
             "--time" => o.time = Some(val()?.parse().map_err(|_| "bad --time")?),
             "--minutes" => o.minutes = Some(val()?.parse().map_err(|_| "bad --minutes")?),
             "--bg" => o.bg = Some(val()?),
+            "--done" => o.done = true,
             "-h" | "--help" | "help" => return Err(USAGE.into()),
             _ if a.starts_with("--") => return Err(format!("unknown option {a}\n\n{USAGE}")),
             _ => positional.push(a),
@@ -155,6 +158,11 @@ fn snapshot(o: &Opts) -> Result<(), String> {
     let mut s = scene::Scene::new();
     s.set_status(o.busy.as_deref().unwrap_or("idle"), 0.0);
     s.since = -o.minutes.unwrap_or(0.0) * 60.0;
+    if o.done {
+        // the "all done!" moment, one second in
+        s.set_status("job", 0.0);
+        s.set_status("idle", (t_end - 1.0).max(0.0));
+    }
     let (w, h) = ((scene::W * sc).ceil() as u32, (scene::H * sc).ceil() as u32);
     let mut pix = Pixmap::new(w, h).ok_or("pixmap")?;
     let mut t = 0.0;

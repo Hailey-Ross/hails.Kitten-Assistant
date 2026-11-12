@@ -5,6 +5,13 @@ taskbar and shows what your background jobs are doing.
 
 - **Busy:** the kitten types away and looks at its screen. Code scrolls on the screen,
   the mug steams, and a speech bubble shows the task and how long it has been running.
+- **Waiting:** a line that starts with `Waiting` (for example `Waiting: test results`).
+  The kitten props its chin on a paw, drums the desk with the other, gives the
+  hourglass on its screen a bored look and thinks "...".
+- **Problem:** a line that starts with `Failed` or `Error`. Ears droop, the kitten
+  frowns and the screen shows a blinking red X.
+- **All done:** when a job goes back to idle, the kitten cheers with its paws up for a
+  moment, with sparkles and a green tick, before it settles down for a nap.
 - **Idle:** the kitten naps on its keyboard. Zzz float up and the screen shows a moon
   and stars.
 
@@ -12,9 +19,13 @@ It is one small native exe. It uses no runtime, needs no install and adds no tra
 The window has no frame and is see-through around the kitten, so it sits on top of
 whatever is behind it.
 
-| Busy | Napping |
-|------|---------|
-| ![The kitten typing, with a bubble saying "Building release 1.2, 12 min so far"](docs/busy.png) | ![The kitten asleep on its keyboard, moon on the screen](docs/nap.png) |
+| Busy | Waiting | Problem |
+|------|---------|---------|
+| ![The kitten typing, with a bubble saying "Building release 1.2, 12 min so far"](docs/busy.png) | ![The kitten with its chin on a paw and an hourglass on the screen, bubble "Waiting: test results, 3 min waiting"](docs/waiting.png) | ![The kitten frowning with drooped ears and a red X on the screen, bubble "Failed: release build"](docs/problem.png) |
+
+| All done | Napping |
+|----------|---------|
+| ![The kitten cheering with its paws up, sparkles and a green tick, bubble "all done!"](docs/done.png) | ![The kitten asleep on its keyboard, moon on the screen](docs/nap.png) |
 
 ## Why
 
@@ -72,7 +83,9 @@ The kitten reads the first line of a text file every 2 seconds:
 | First line                 | Kitten                           |
 |----------------------------|----------------------------------|
 | any text                   | types, bubble shows the text     |
-| empty, missing, or `idle`  | naps                             |
+| `Waiting...`               | waits, bubble shows the text     |
+| `Failed...` or `Error...`  | looks worried, bubble shows the text |
+| empty, missing, or `idle`  | naps (after a short cheer if a job just ended) |
 
 The default file is `status.txt` next to the exe. Pick another with `--status FILE`
 or the `KITTEN_STATUS` environment variable. Anything that can write a file can drive
@@ -129,6 +142,9 @@ changes and for screenshots:
 
 ```
 kitten-assistant snapshot busy.png --busy "Building release 1.2" --minutes 12 --bg 6a8caf
+kitten-assistant snapshot waiting.png --busy "Waiting: test results" --minutes 3 --time 4.2 --bg 6a8caf
+kitten-assistant snapshot problem.png --busy "Failed: release build" --bg 6a8caf
+kitten-assistant snapshot done.png --done --time 3.3 --bg 6a8caf
 kitten-assistant snapshot nap.png --bg 6a8caf
 ```
 

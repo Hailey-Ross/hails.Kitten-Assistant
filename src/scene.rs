@@ -29,6 +29,10 @@ const CASE: Rgba = Rgba::rgb(240, 230, 210);
 const CASE_SHADE: Rgba = Rgba::rgb(214, 202, 178);
 const SCREEN_ON: Rgba = Rgba::rgb(36, 54, 66);
 const SCREEN_OFF: Rgba = Rgba::rgb(42, 40, 60);
+const SCREEN_BAD: Rgba = Rgba::rgb(66, 34, 42);
+const GREEN: Rgba = Rgba::rgb(110, 228, 140);
+const RED: Rgba = Rgba::rgb(240, 92, 92);
+const SAND: Rgba = Rgba::rgb(255, 214, 102);
 const CODE: [Rgba; 4] = [
     Rgba::rgb(126, 232, 170),
     Rgba::rgb(255, 160, 204),
@@ -66,6 +70,31 @@ fn hash(n: i64) -> u32 {
     (v % 1000) as u32
 }
 
+/// What a busy status line asks for, from its first word.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Mood {
+    /// typing away
+    Busy,
+    /// `Waiting...`: sits back, taps a paw, hourglass on the screen
+    Waiting,
+    /// `Failed...` / `Error...`: ears down, red X on the screen
+    Problem,
+}
+
+impl Mood {
+    fn of(s: &str) -> Mood {
+        let word: String = s.chars().take_while(|c| c.is_alphabetic()).collect::<String>().to_lowercase();
+        match word.as_str() {
+            "waiting" | "wait" => Mood::Waiting,
+            "failed" | "fail" | "error" | "problem" => Mood::Problem,
+            _ => Mood::Busy,
+        }
+    }
+}
+
+/// Seconds the "all done!" moment lasts after busy turns idle.
+const CHEER_SECS: f64 = 2.5;
+
 /// Per-frame pose worked out by `update`.
 pub struct Pose {
     hy: f32,
@@ -76,6 +105,12 @@ pub struct Pose {
     twitch_ear: f32,
     l: Paw,
     r: Paw,
+    /// 0..1 through the "all done!" moment, None outside it
+    cheer: Option<f32>,
+    /// 0 = ears up, 1 = ears down
+    droop: f32,
+    /// 0 = eyes wide open, 1 = lids all the way down
+    lid: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -89,8 +124,11 @@ struct Paw {
 pub struct Scene {
     pub busy: bool,
     pub task: String,
+    pub mood: Mood,
     /// time (seconds) the current task started
     pub since: f64,
+    /// time the last job finished (busy -> idle), for the "all done!" moment
+    pub done_at: f64,
     rng: u64,
     next_blink: f64,
     next_twitch: f64,
@@ -116,7 +154,9 @@ impl Scene {
         Scene {
             busy: false,
             task: String::new(),
+            mood: Mood::Busy,
             since: 0.0,
+            done_at: -100.0,
             rng: 0x2545_F491_4F6C_DD1D,
             next_blink: 2.0,
             next_twitch: 4.0,
@@ -143,8 +183,21 @@ impl Scene {
         if busy && (!self.busy || s != self.task) {
             self.since = t - age.max(0.0);
         }
+        // a job that ends without a problem gets a little celebration
+        if self.busy && !busy && self.mood != Mood::Problem {
+            self.done_at = t;
+        }
+        if busy {
+            self.done_at = -100.0;
+            self.mood = Mood::of(s);
+        }
         self.busy = busy;
         self.task = if busy { s.to_string() } else { String::new() };
+    }
+
+    fn cheer(&self, t: f64) -> Option<f32> {
+        let p = (t - self.done_at) / CHEER_SECS;
+        (!self.busy && (0.0..1.0).contains(&p)).then_some(p as f32)
     }
 
     fn rand(&mut self) -> f64 {
@@ -175,16 +228,40 @@ impl Scene {
         let tw = ((t - self.twitch_start) / 0.22) as f32;
         let twitch = if (0.0..1.0).contains(&tw) { (tw * PI).sin() * 4.0 } else { 0.0 };
 
-        let (hy, sway) = if busy {
+        let cheer = self.cheer(t);
+        let typing = busy && self.mood == Mood::Busy;
+        let waiting = busy && self.mood == Mood::Waiting;
+        let problem = busy && self.mood == Mood::Problem;
+
+        let (hy, sway) = if typing {
             (126.0 + 1.0 * (tf * 2.0 * PI * 2.5).sin(), 8.0 * (tf * 2.4).sin())
+        } else if waiting {
+            // slumps a little, tail swishing slowly
+            (131.0 + 0.8 * (tf * 1.2).sin(), 11.0 * (tf * 0.7).sin())
+        } else if problem {
+            (133.0 + 0.6 * tf.sin(), 2.0 * (tf * 0.6).sin())
+        } else if cheer.is_some() {
+            // happy little hops
+            (124.0 - 5.0 * (tf * 2.0 * PI * 1.6).sin().abs(), 0.0)
         } else {
             (137.0 + 1.5 * (tf * 1.3).sin(), 3.0 * (tf * 0.8).sin())
         };
 
         // paws: busy = take turns tapping (about five taps a second), moving to a new key
-        // while lifted; idle = folded on the keyboard under the chin
+        // while lifted; waiting = one paw taps the desk; cheering = both paws up;
+        // otherwise folded on the keyboard under the chin
         let (mut l, mut r);
-        if busy {
+        if waiting {
+            // chin propped on one paw, the other drumming: three quick taps, then a pause
+            l = Paw { x: CX - 30.0, lift: 181.0 - (hy + 17.0), key: None, down: false };
+            let beat = tf % 1.6;
+            let tap = if beat < 0.6 { (beat * 2.0 * PI * 5.0).sin().max(0.0) } else { 0.0 };
+            r = Paw { x: CX + 12.0, lift: 5.0 * tap, key: None, down: false };
+        } else if cheer.is_some() {
+            let wave = 3.0 * (tf * 2.0 * PI * 1.6).sin();
+            l = Paw { x: CX - 50.0, lift: 46.0 + wave, key: None, down: false };
+            r = Paw { x: CX + 30.0, lift: 46.0 - wave, key: None, down: false };
+        } else if typing {
             let phase = t * 5.0;
             let s = (std::f64::consts::PI * phase).sin() as f32;
             let cycle = (phase / 2.0).floor() as i64;
@@ -200,22 +277,45 @@ impl Scene {
             self.lpx = l.x;
             self.rpx = r.x;
         }
-        let k = 1.0 - (-dt * if busy { 14.0 } else { 4.0 }).exp();
-        if !busy || l.lift > 3.0 {
+        let k = 1.0 - (-dt * if typing || cheer.is_some() { 14.0 } else { 4.0 }).exp();
+        if !typing || l.lift > 3.0 {
             self.lpx += (l.x - self.lpx) * k;
         }
-        if !busy || r.lift > 3.0 {
+        if !typing || r.lift > 3.0 {
             self.rpx += (r.x - self.rpx) * k;
         }
         l.x = self.lpx;
         r.x = self.rpx;
-        l.down = busy && l.lift < 1.0;
-        r.down = busy && r.lift < 1.0;
+        l.down = typing && l.lift < 1.0;
+        r.down = typing && r.lift < 1.0;
 
-        // looks at the screen while typing, glances back at you every so often
-        let look = if busy && (t % 9.0) > 1.3 { 2.5 } else { 0.0 };
+        // looks at the screen while typing and glances back at you every so often;
+        // while waiting it looks off to the side now and then
+        let look = if typing && (t % 9.0) > 1.3 {
+            2.5
+        } else if waiting && (t % 5.0) > 3.4 {
+            // a glance over at the hourglass
+            3.5
+        } else {
+            0.0
+        };
+        // heavy, bored eyelids while waiting (a little less during the glance)
+        let lid = if waiting { if look > 0.0 { 0.25 } else { 0.5 } } else { 0.0 };
 
-        Pose { hy, sway, eyes_closed: !busy || blink, look, twitch, twitch_ear: self.twitch_ear, l, r }
+        Pose {
+            hy,
+            sway,
+            // asleep, or squeezed shut with joy while cheering
+            eyes_closed: !busy || blink,
+            look,
+            twitch,
+            twitch_ear: self.twitch_ear,
+            l,
+            r,
+            cheer,
+            droop: if problem { 1.0 } else { 0.0 },
+            lid,
+        }
     }
 
     pub fn render(&self, pix: &mut Pixmap, sc: f32, t: f64, p: &Pose) {
@@ -223,18 +323,50 @@ impl Scene {
         let mut c = Canvas::new(pix, sc);
         let tf = t as f32;
         self.tail(&mut c, p);
-        self.computer(&mut c, tf);
+        self.computer(&mut c, tf, p);
         self.body(&mut c, p);
         self.desk(&mut c);
         self.mug(&mut c, tf);
         self.keyboard(&mut c, p);
         self.arms(&mut c, p);
         self.head(&mut c, p);
+        if self.busy && self.mood == Mood::Waiting {
+            // the chin rests on this paw, so it sits in front of the head
+            let py = 181.0 - p.l.lift;
+            c.blob(&oval(p.l.x, py, PAW_W, 13.0), FUR);
+            for tx in [6.5, 10.0, 13.5] {
+                c.stroke(&line(p.l.x + tx, py + 0.8, p.l.x + tx, py + 4.2), INK.fade(0.8), 1.1);
+            }
+        }
         self.sparkles(&mut c, p);
-        if !self.busy {
+        if let Some(k) = p.cheer {
+            self.confetti(&mut c, tf, k, p);
+        } else if self.busy && self.mood == Mood::Waiting {
+            // "..." beside the head, the dots lighting up one by one
+            let step = (tf * 2.2) as i64 % 4;
+            for i in 0..3 {
+                let a = if (i as i64) < step { 1.0 } else { 0.25 };
+                c.fill(&circle(CX + 58.0 + i as f32 * 9.0, p.hy - 30.0, 2.8), SUB.fade(a));
+            }
+        } else if !self.busy {
             self.zzz(&mut c, tf, p);
         }
-        self.bubble(&mut c, t);
+        self.bubble(&mut c, t, p);
+    }
+
+    /// Twinkling stars around the head during the "all done!" moment.
+    fn confetti(&self, c: &mut Canvas, t: f32, k: f32, p: &Pose) {
+        let fade = if k > 0.8 { (1.0 - k) / 0.2 } else { 1.0 };
+        for i in 0..6 {
+            // an arc above the head, clear of the face
+            let a = PI * (1.05 + 0.9 * i as f32 / 5.0);
+            let r = 64.0 + 5.0 * (t * 5.0 + i as f32).sin();
+            let (x, y) = (CX + a.cos() * r, p.hy - 14.0 + a.sin() * r * 0.75);
+            let s = 3.0 + 1.5 * (t * 7.0 + i as f32 * 1.3).sin().abs();
+            let col = if i % 2 == 0 { SPARK } else { PINK_DARK }.fade(fade);
+            c.stroke(&line(x - s, y, x + s, y), col, 1.8);
+            c.stroke(&line(x, y - s, x, y + s), col, 1.8);
+        }
     }
 
     fn tail(&self, c: &mut Canvas, p: &Pose) {
@@ -253,7 +385,8 @@ impl Scene {
         c.stroke(&tip, FUR_DARK, 9.0);
     }
 
-    fn computer(&self, c: &mut Canvas, t: f32) {
+    fn computer(&self, c: &mut Canvas, t: f32, p: &Pose) {
+        let mood = if self.busy { Some(self.mood) } else { None };
         // stand
         c.blob(&rrect(229.0, 196.0, 18.0, 9.0, 2.0), CASE_SHADE);
         c.blob(&rrect(213.0, 202.0, 50.0, 8.0, 4.0), CASE);
@@ -265,19 +398,51 @@ impl Scene {
             let y = 188.0 + i as f32 * 3.0;
             c.stroke(&line(200.0, y, 214.0, y), INK.fade(0.35), 1.2);
         }
-        let led = if self.busy {
-            Rgba::rgb(110, 228, 140).fade(if (t * 3.0).fract() < 0.6 { 1.0 } else { 0.45 })
-        } else {
-            Rgba::rgb(255, 186, 84).fade(0.45 + 0.55 * (0.5 + 0.5 * (t * 1.5).sin()))
+        let breathe = |speed: f32| 0.45 + 0.55 * (0.5 + 0.5 * (t * speed).sin());
+        let led = match mood {
+            Some(Mood::Busy) => GREEN.fade(if (t * 3.0).fract() < 0.6 { 1.0 } else { 0.45 }),
+            Some(Mood::Waiting) => Rgba::rgb(255, 186, 84).fade(breathe(4.0)),
+            Some(Mood::Problem) => RED.fade(if (t * 2.0).fract() < 0.5 { 1.0 } else { 0.3 }),
+            None if p.cheer.is_some() => GREEN,
+            None => Rgba::rgb(255, 186, 84).fade(breathe(1.5)),
         };
         c.fill(&circle(277.0, 191.0, 2.8), led);
         c.stroke(&circle(277.0, 191.0, 2.8), INK.fade(0.6), 1.0);
 
         // screen
         let screen = rrect(199.0, 121.0, 78.0, 60.0, 7.0);
-        c.fill(&screen, if self.busy { SCREEN_ON } else { SCREEN_OFF });
+        let bg = match mood {
+            Some(Mood::Problem) => SCREEN_BAD,
+            Some(_) => SCREEN_ON,
+            None if p.cheer.is_some() => SCREEN_ON,
+            None => SCREEN_OFF,
+        };
+        c.fill(&screen, bg);
         c.clip(Some(&screen));
-        if self.busy {
+        if mood == Some(Mood::Waiting) {
+            // an hourglass whose sand runs down every three seconds
+            let k = ((t % 3.0) / 2.6).min(1.0);
+            let (x, top, mid, bot, hw) = (238.0, 136.0, 151.0, 166.0, 12.0);
+            let left = 1.0 - k;
+            c.fill(&poly(&[(x - hw * left, mid - 14.0 * left), (x + hw * left, mid - 14.0 * left), (x, mid)]), SAND);
+            c.fill(&poly(&[(x - hw, bot), (x + hw, bot), (x, bot - 12.0 * k)]), SAND);
+            if k < 1.0 {
+                c.stroke(&line(x, mid, x, bot - 12.0 * k), SAND, 1.2);
+            }
+            let frame = CASE;
+            c.stroke(&poly(&[(x - hw, top), (x + hw, top), (x, mid)]), frame, 1.6);
+            c.stroke(&poly(&[(x, mid), (x + hw, bot), (x - hw, bot)]), frame, 1.6);
+            c.stroke(&line(x - hw - 3.0, top - 1.5, x + hw + 3.0, top - 1.5), frame, 2.6);
+            c.stroke(&line(x - hw - 3.0, bot + 1.5, x + hw + 3.0, bot + 1.5), frame, 2.6);
+        } else if mood == Some(Mood::Problem) {
+            // a blinking red X
+            let a = if (t * 2.0).fract() < 0.5 { 1.0 } else { 0.55 };
+            c.stroke(&line(226.0, 139.0, 250.0, 163.0), RED.fade(a), 5.0);
+            c.stroke(&line(250.0, 139.0, 226.0, 163.0), RED.fade(a), 5.0);
+        } else if mood.is_none() && p.cheer.is_some() {
+            // a big green tick
+            c.stroke(&polyline(&[(224.0, 151.0), (234.0, 161.0), (254.0, 139.0)]), GREEN, 5.0);
+        } else if self.busy {
             // code scrolls up as it is typed
             let lh = 8.0;
             let off = t * 12.0;
@@ -406,16 +571,15 @@ impl Scene {
     fn head(&self, c: &mut Canvas, p: &Pose) {
         let hy = p.hy;
         // ears (one flicks now and then)
+        // ears droop sideways when something went wrong
+        let d = p.droop;
+        let mix = |a: f32, b: f32| a + (b - a) * d;
         for s in [-1.0f32, 1.0] {
             let tw = if s == p.twitch_ear { p.twitch } else { 0.0 };
-            c.blob(
-                &poly(&[(CX + s * 46.0, hy - 10.0), (CX + s * (37.0 + tw * 0.6), hy - 53.0 + tw), (CX + s * 11.0, hy - 34.0)]),
-                FUR,
-            );
-            c.fill(
-                &poly(&[(CX + s * 37.0, hy - 18.0), (CX + s * (34.5 + tw * 0.6), hy - 44.0 + tw), (CX + s * 19.0, hy - 32.0)]),
-                PINK,
-            );
+            let tip = (CX + s * mix(37.0 + tw * 0.6, 60.0), hy + mix(-53.0 + tw, -30.0));
+            let inner = (CX + s * mix(34.5 + tw * 0.6, 52.0), hy + mix(-44.0 + tw, -28.0));
+            c.blob(&poly(&[(CX + s * 46.0, hy - 10.0), tip, (CX + s * 11.0, hy - 34.0)]), FUR);
+            c.fill(&poly(&[(CX + s * 37.0, hy - 18.0), inner, (CX + s * 19.0, hy - 32.0)]), PINK);
         }
         // head
         c.blob(&oval(CX - 51.0, hy - 40.0, 102.0, 80.0), FUR);
@@ -437,6 +601,12 @@ impl Scene {
                 c.fill(&oval(x - 7.5, ey - 9.0, 15.0, 18.0), EYE);
                 c.fill(&circle(x - 2.6, ey - 4.0, 3.3), WHITE);
                 c.fill(&circle(x + 2.8, ey + 3.4, 1.6), WHITE);
+                if p.lid > 0.0 {
+                    // the upper lid covers the top of the eye
+                    let edge = ey - 9.0 + 18.0 * p.lid;
+                    c.fill(&rrect(x - 9.0, ey - 11.0, 18.0, edge - (ey - 11.0), 2.0), FUR);
+                    c.stroke(&line(x - 8.0, edge, x + 8.0, edge), EYE, 2.2);
+                }
             }
         }
         // cheeks, nose, mouth, whiskers
@@ -445,8 +615,13 @@ impl Scene {
         let nose = poly(&[(CX - 4.5, hy + 6.0), (CX + 4.5, hy + 6.0), (CX, hy + 10.5)]);
         c.fill(&nose, PINK);
         c.stroke(&nose, PINK_DARK, 1.2);
-        c.stroke(&quad(CX - 7.0, hy + 12.0, CX - 3.5, hy + 16.5, CX, hy + 12.0), INK, 1.5);
-        c.stroke(&quad(CX, hy + 12.0, CX + 3.5, hy + 16.5, CX + 7.0, hy + 12.0), INK, 1.5);
+        if p.droop > 0.5 {
+            // a small worried frown
+            c.stroke(&quad(CX - 6.0, hy + 16.0, CX, hy + 11.5, CX + 6.0, hy + 16.0), INK, 1.5);
+        } else {
+            c.stroke(&quad(CX - 7.0, hy + 12.0, CX - 3.5, hy + 16.5, CX, hy + 12.0), INK, 1.5);
+            c.stroke(&quad(CX, hy + 12.0, CX + 3.5, hy + 16.5, CX + 7.0, hy + 12.0), INK, 1.5);
+        }
         for s in [-1.0f32, 1.0] {
             c.stroke(&line(CX + s * 31.0, hy + 9.0, CX + s * 58.0, hy + 5.0), INK.fade(0.6), 1.1);
             c.stroke(&line(CX + s * 31.0, hy + 13.0, CX + s * 57.0, hy + 16.0), INK.fade(0.6), 1.1);
@@ -479,16 +654,19 @@ impl Scene {
         }
     }
 
-    fn bubble(&self, c: &mut Canvas, t: f64) {
+    fn bubble(&self, c: &mut Canvas, t: f64, p: &Pose) {
         let (Some(bold), Some(regular)) = (self.bold.as_ref(), self.regular.as_ref()) else { return };
         let (main, sub) = if self.busy {
             let m = ((t - self.since) / 60.0).max(0.0) as i64;
+            let (start, so_far) = if self.mood == Mood::Waiting { ("just started waiting", "waiting") } else { ("just started", "so far") };
             let sub = match m {
-                0 => "just started".to_string(),
-                1..=59 => format!("{m} min so far"),
-                _ => format!("{} h {} min so far", m / 60, m % 60),
+                0 => start.to_string(),
+                1..=59 => format!("{m} min {so_far}"),
+                _ => format!("{} h {} min {so_far}", m / 60, m % 60),
             };
             (self.task.clone(), Some(sub))
+        } else if p.cheer.is_some() {
+            ("all done!".to_string(), None)
         } else {
             ("napping... no jobs right now".to_string(), None)
         };
@@ -501,7 +679,7 @@ impl Scene {
         let bottom = 68.0;
         let by = bottom - bh;
         let bx = (CX - bw * 0.32).clamp(4.0, W - 4.0 - bw);
-        let fill = WHITE.fade(if self.busy { 0.98 } else { 0.86 });
+        let fill = WHITE.fade(if self.busy || p.cheer.is_some() { 0.98 } else { 0.86 });
 
         let body = rrect(bx, by, bw, bh, 11.0);
         c.fill(&body, fill);
@@ -511,7 +689,7 @@ impl Scene {
         c.stroke(&line(CX - 13.0, bottom, tip.0, tip.1), INK, 1.8);
         c.stroke(&line(tip.0, tip.1, CX + 2.0, bottom), INK, 1.8);
 
-        let col = if self.busy { INK } else { SUB };
+        let col = if self.busy || p.cheer.is_some() { INK } else { SUB };
         for (i, l) in lines.iter().enumerate() {
             c.text(bold, ms, bx + 12.0, by + 8.0 + 12.0 + i as f32 * lh, l, col);
         }
