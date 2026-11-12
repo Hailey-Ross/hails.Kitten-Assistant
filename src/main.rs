@@ -24,7 +24,8 @@ kitten-assistant snapshot out.png     render one frame to a PNG
 options:
   --status FILE    status file (default: status.txt next to the exe, or %KITTEN_STATUS%)
   --scale N        size multiplier (default: follows screen DPI)
-  --x N --y N      window position (default: bottom-right, on the taskbar)
+  --monitor N      start on display N and make it the default (right-click > Monitor does the same)
+  --x N --y N      window position (default: bottom-right of the default display)
 snapshot options:
   --busy TEXT      render the busy pose with TEXT (default: napping)
   --time SECONDS   animation time to render (default 3.2)
@@ -39,6 +40,7 @@ struct Opts {
     scale: Option<f32>,
     x: Option<i32>,
     y: Option<i32>,
+    monitor: Option<u32>,
     busy: Option<String>,
     time: Option<f64>,
     minutes: Option<f64>,
@@ -56,6 +58,7 @@ fn parse() -> Result<Opts, String> {
             "--scale" => o.scale = Some(val()?.parse().map_err(|_| "bad --scale")?),
             "--x" => o.x = Some(val()?.parse().map_err(|_| "bad --x")?),
             "--y" => o.y = Some(val()?.parse().map_err(|_| "bad --y")?),
+            "--monitor" => o.monitor = Some(val()?.parse().map_err(|_| "bad --monitor")?),
             "--busy" => o.busy = Some(val()?),
             "--time" => o.time = Some(val()?.parse().map_err(|_| "bad --time")?),
             "--minutes" => o.minutes = Some(val()?.parse().map_err(|_| "bad --minutes")?),
@@ -185,6 +188,7 @@ mod win {
     const POLL: usize = 2;
     const MENU_CORNER: usize = 1;
     const MENU_QUIT: usize = 2;
+    const MENU_MONITOR: usize = 100; // + index into monitors()
 
     fn wide(s: &str) -> Vec<u16> {
         s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -284,10 +288,96 @@ mod win {
         }
     }
 
+    struct Monitor {
+        device: String,
+        label: String,
+        work: RECT,
+        primary: bool,
+    }
+
+    fn from_wide(s: &[u16]) -> String {
+        String::from_utf16_lossy(&s[..s.iter().position(|&c| c == 0).unwrap_or(s.len())])
+    }
+
+    /// `\\.\DISPLAY2` -> 2, the number Windows shows in Display settings.
+    fn display_number(device: &str) -> u32 {
+        device.trim_start_matches(r"\\.\DISPLAY").parse().unwrap_or(u32::MAX)
+    }
+
+    fn monitors() -> Vec<Monitor> {
+        unsafe extern "system" fn each(hm: HMONITOR, _: HDC, _: *mut RECT, lp: LPARAM) -> windows_sys::core::BOOL {
+            let list = &mut *(lp as *mut Vec<Monitor>);
+            let mut mi: MONITORINFOEXW = std::mem::zeroed();
+            mi.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
+            if GetMonitorInfoW(hm, &mut mi as *mut MONITORINFOEXW as *mut MONITORINFO) != 0 {
+                let device = from_wide(&mi.szDevice);
+                let mut dd: DISPLAY_DEVICEW = std::mem::zeroed();
+                dd.cb = std::mem::size_of::<DISPLAY_DEVICEW>() as u32;
+                let dev = wide(&device);
+                let model = if EnumDisplayDevicesW(dev.as_ptr(), 0, &mut dd, 0) != 0 { from_wide(&dd.DeviceString) } else { String::new() };
+                let r = mi.monitorInfo.rcMonitor;
+                let primary = mi.monitorInfo.dwFlags & MONITORINFOF_PRIMARY != 0;
+                let mut label = format!("Display {}", display_number(&device));
+                if !model.is_empty() && !model.starts_with("Generic") {
+                    label += &format!(": {model}");
+                }
+                label += &format!(" ({} x {}{})", r.right - r.left, r.bottom - r.top, if primary { ", main" } else { "" });
+                list.push(Monitor { device, label, work: mi.monitorInfo.rcWork, primary });
+            }
+            1
+        }
+        let mut list: Vec<Monitor> = Vec::new();
+        unsafe { EnumDisplayMonitors(null_mut(), null(), Some(each), &mut list as *mut Vec<Monitor> as LPARAM) };
+        list.sort_by_key(|m| display_number(&m.device));
+        list
+    }
+
+    /// `kitten-assistant.ini` next to the exe: `key=value` lines.
+    fn settings_path() -> Option<PathBuf> {
+        std::env::current_exe().ok()?.parent().map(|d| d.join("kitten-assistant.ini"))
+    }
+
+    fn setting(key: &str) -> Option<String> {
+        let text = std::fs::read_to_string(settings_path()?).ok()?;
+        text.lines().find_map(|l| l.trim().strip_prefix(key)?.trim_start().strip_prefix('=').map(|v| v.trim().to_string()))
+    }
+
+    fn save_setting(key: &str, value: &str) {
+        let Some(p) = settings_path() else { return };
+        let old = std::fs::read_to_string(&p).unwrap_or_default();
+        let mut lines: Vec<String> = old.lines().filter(|l| l.split('=').next().map(str::trim) != Some(key)).map(String::from).collect();
+        lines.push(format!("{key}={value}"));
+        if let Err(e) = std::fs::write(&p, lines.join("\n") + "\n") {
+            log(&format!("could not save {}: {e}", p.display()));
+        }
+    }
+
+    thread_local! {
+        /// The display the kitten calls home: `\\.\DISPLAYn`, empty = the main display.
+        static HOME: RefCell<String> = const { RefCell::new(String::new()) };
+    }
+
+    /// Bottom-right of the home display's work area (above its taskbar), falling back to the
+    /// main display when the saved one is gone.
     fn corner(w: i32, h: i32) -> (i32, i32) {
-        let mut wa = RECT { left: 0, top: 0, right: 1280, bottom: 720 };
-        unsafe { SystemParametersInfoW(SPI_GETWORKAREA, 0, &mut wa as *mut RECT as *mut c_void, 0) };
+        let home = HOME.with(|h| h.borrow().clone());
+        let list = monitors();
+        let wa = match list.iter().find(|m| m.device == home).or_else(|| list.iter().find(|m| m.primary)) {
+            Some(m) => m.work,
+            None => {
+                let mut wa = RECT { left: 0, top: 0, right: 1280, bottom: 720 };
+                unsafe { SystemParametersInfoW(SPI_GETWORKAREA, 0, &mut wa as *mut RECT as *mut c_void, 0) };
+                wa
+            }
+        };
         (wa.right - w - 20, wa.bottom - h)
+    }
+
+    unsafe fn to_corner(hwnd: HWND) {
+        let mut r = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+        GetWindowRect(hwnd, &mut r);
+        let (x, y) = corner(r.right - r.left, r.bottom - r.top);
+        SetWindowPos(hwnd, null_mut(), x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
     }
 
     fn with_app(f: impl FnOnce(&mut App)) {
@@ -303,23 +393,35 @@ mod win {
 
     unsafe fn show_menu(hwnd: HWND) {
         let m = CreatePopupMenu();
-        let (a, b) = (wide("Back to corner"), wide("Quit"));
+        let sub = CreatePopupMenu();
+        let list = monitors();
+        let home = HOME.with(|h| h.borrow().clone());
+        let current = list.iter().position(|d| d.device == home).or_else(|| list.iter().position(|d| d.primary));
+        for (i, d) in list.iter().enumerate() {
+            let label = wide(&d.label);
+            let check = if Some(i) == current { MF_CHECKED } else { MF_UNCHECKED };
+            AppendMenuW(sub, MF_STRING | check, MENU_MONITOR + i, label.as_ptr());
+        }
+        let (a, s, b) = (wide("Back to corner"), wide("Monitor"), wide("Quit"));
         AppendMenuW(m, MF_STRING, MENU_CORNER, a.as_ptr());
+        AppendMenuW(m, MF_STRING | MF_POPUP, sub as usize, s.as_ptr());
+        AppendMenuW(m, MF_SEPARATOR, 0, null());
         AppendMenuW(m, MF_STRING, MENU_QUIT, b.as_ptr());
         let mut pt = POINT { x: 0, y: 0 };
         GetCursorPos(&mut pt);
         SetForegroundWindow(hwnd);
         let cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, null()) as usize;
-        DestroyMenu(m);
+        DestroyMenu(m); // also destroys the submenu
         match cmd {
-            MENU_CORNER => {
-                let mut r = RECT { left: 0, top: 0, right: 0, bottom: 0 };
-                GetWindowRect(hwnd, &mut r);
-                let (x, y) = corner(r.right - r.left, r.bottom - r.top);
-                SetWindowPos(hwnd, null_mut(), x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-            }
+            MENU_CORNER => to_corner(hwnd),
             MENU_QUIT => {
                 DestroyWindow(hwnd);
+            }
+            c if c >= MENU_MONITOR && c - MENU_MONITOR < list.len() => {
+                let device = list[c - MENU_MONITOR].device.clone();
+                save_setting("monitor", &device);
+                HOME.with(|h| *h.borrow_mut() = device);
+                to_corner(hwnd);
             }
             _ => {}
         }
@@ -378,6 +480,18 @@ mod win {
             if RegisterClassW(&wc) == 0 {
                 return Err("could not register the window class".into());
             }
+            let home = match o.monitor {
+                Some(n) => {
+                    let device = format!(r"\\.\DISPLAY{n}");
+                    if !monitors().iter().any(|m| m.device == device) {
+                        return Err(format!("there is no display {n}; see right-click > Monitor for the list"));
+                    }
+                    save_setting("monitor", &device);
+                    device
+                }
+                None => setting("monitor").unwrap_or_default(),
+            };
+            HOME.with(|h| *h.borrow_mut() = home);
             let (cx, cy) = corner(w, h);
             let (x, y) = (o.x.unwrap_or(cx), o.y.unwrap_or(cy));
             let title = wide("Kitten Assistant");

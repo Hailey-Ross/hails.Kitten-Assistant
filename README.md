@@ -56,9 +56,14 @@ the count going.
 The [full guide](docs/USAGE.md) covers every command and option, the status file rules,
 scripts in several languages, recipes, starting with Windows and troubleshooting.
 
-Drag the kitten anywhere with the left mouse button. Right-click it for **Back to
-corner** and **Quit**. Only one kitten runs at a time, and starting a second one does
-nothing.
+Drag the kitten anywhere with the left mouse button. Right-click it for:
+
+- **Back to corner:** back to the bottom-right of its display.
+- **Monitor:** pick which display the kitten lives on. It moves there at once and starts
+  there from then on (the choice is saved in `kitten-assistant.ini` next to the exe).
+- **Quit.**
+
+Only one kitten runs at a time, and starting a second one does nothing.
 
 ### The status file
 
@@ -109,6 +114,7 @@ that has the assistant set a short status line at each step and `idle` when it i
 |----------------|-------------------------------------------------------------|
 | `--status FILE`| status file to watch (default `status.txt` beside the exe)  |
 | `--scale N`    | size multiplier (default follows the screen DPI)            |
+| `--monitor N`  | start on display N and make it the default                  |
 | `--x N --y N`  | start position in screen pixels (default bottom-right)      |
 
 ### Start with Windows

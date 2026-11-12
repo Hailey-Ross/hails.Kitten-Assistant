@@ -75,7 +75,7 @@ kitten-assistant say "some text"      write "some text" to the status file
 kitten-assistant idle                 write "idle" to the status file
 kitten-assistant quit                 close the running kitten
 kitten-assistant snapshot out.png     render one frame to a PNG, no window
-kitten-assistant help                 show the command summary
+kitten-assistant help                 show the command summary (in a message box)
 ```
 
 - `say` and `idle` only write the status file and exit at once. They work even if no kitten is
@@ -84,6 +84,13 @@ kitten-assistant help                 show the command summary
 - `quit` closes the running kitten wherever it is. It does nothing if none is running.
 - Only one kitten runs at a time. Starting a second one does nothing, so it is safe to put
   `kitten-assistant` at the top of every script.
+- The exe is a windowed app, so it prints nothing to the terminal: `help` and errors (for
+  example a status folder that does not exist) show a message box, and errors are also written
+  to `%TEMP%\kitten-assistant.log`.
+- **In PowerShell, add `| Out-Null`** to `say` and `idle` (for example
+  `kitten-assistant say "Backup" | Out-Null`). PowerShell does not wait for windowed apps, so
+  without it the next line of your script can run before the file is written. Command Prompt
+  batch files, bash, Python and other shells wait on their own.
 
 ## 4. Options
 
@@ -91,7 +98,8 @@ kitten-assistant help                 show the command summary
 |-----------------|----------------|-----------------------------------------------------------------|
 | `--status FILE` | run, say, idle | the status file (see [section 5](#5-choosing-a-status-file))    |
 | `--scale N`     | run, snapshot  | size multiplier; default follows the screen's DPI (snapshot: 2) |
-| `--x N --y N`   | run            | window position in screen pixels; default bottom-right, on the taskbar |
+| `--monitor N`   | run            | start on display N (the number in Windows' Display settings) and save it as the default |
+| `--x N --y N`   | run            | window position in screen pixels; default bottom-right of the default display, above its taskbar |
 | `--busy TEXT`   | snapshot       | draw the busy pose with TEXT; default is napping                |
 | `--minutes N`   | snapshot       | elapsed minutes shown in the bubble                             |
 | `--time SECONDS`| snapshot       | which moment of the animation to draw (default 3.2)             |
@@ -131,7 +139,7 @@ commands, or write the file directly.
 **PowerShell**
 
 ```powershell
-kitten-assistant say "Nightly backup"
+kitten-assistant say "Nightly backup" | Out-Null
 # or, without the exe:
 Set-Content -Path $env:KITTEN_STATUS -Value "Nightly backup"
 ```
@@ -176,10 +184,10 @@ exit path:
 
 ```powershell
 try {
-    kitten-assistant say "Rendering video"
+    kitten-assistant say "Rendering video" | Out-Null
     ./render.ps1
 } finally {
-    kitten-assistant idle
+    kitten-assistant idle | Out-Null
 }
 ```
 
@@ -197,10 +205,10 @@ then shows how long the current step has taken:
 ```powershell
 $steps = "Fetching", "Building", "Testing", "Packaging"
 foreach ($i in 0..($steps.Count - 1)) {
-    kitten-assistant say "$($steps[$i]) ($($i + 1) of $($steps.Count))"
+    kitten-assistant say "$($steps[$i]) ($($i + 1) of $($steps.Count))" | Out-Null
     # ... do the step ...
 }
-kitten-assistant idle
+kitten-assistant idle | Out-Null
 ```
 
 If you want the timer to show the whole job instead, keep the same text for the whole job.
@@ -213,8 +221,9 @@ Save as `kitten-run.ps1`, then run `kitten-run "Building" cargo build --release`
 
 ```powershell
 param([string]$Label, [Parameter(ValueFromRemainingArguments)]$Cmd)
-kitten-assistant say $Label
-try { & $Cmd[0] $Cmd[1..($Cmd.Count - 1)] } finally { kitten-assistant idle }
+kitten-assistant say $Label | Out-Null
+$exe, $rest = $Cmd
+try { & $exe @rest } finally { kitten-assistant idle | Out-Null }
 ```
 
 ### Scheduled tasks
@@ -259,9 +268,18 @@ for that project only), and make sure the assistant can run
 ## 9. Moving, resizing and starting with Windows
 
 - **Move it:** drag the kitten with the left mouse button. It goes back to the bottom-right
-  corner the next time it starts.
+  corner of its display the next time it starts.
 - **Back to the corner:** right-click the kitten and pick **Back to corner**.
-- **Start somewhere else:** `kitten-assistant --x 100 --y 900`.
+- **Pick a display:** with more than one monitor, right-click the kitten and open **Monitor**.
+  It lists every display with the number Windows uses in Settings > System > Display, the
+  model name when Windows knows it and the resolution; the current one has a check mark.
+  Pick one and the kitten moves to its bottom-right corner (above the taskbar if that
+  display has one). The choice is saved in `kitten-assistant.ini` next to the exe, so the
+  kitten starts there from then on. `--monitor N` on the command line does the same, which
+  is handy in a startup shortcut. If the saved display is unplugged, the kitten uses the
+  main display until it comes back.
+- **Start somewhere else:** `kitten-assistant --x 100 --y 900` (screen pixels; displays
+  above or left of the main one have negative positions).
 - **Bigger or smaller:** `kitten-assistant --scale 3` (whole or decimal numbers). By default the
   size follows your screen's scaling setting.
 - **It stays on top** of other windows but never takes the keyboard focus, and it has no
@@ -294,6 +312,7 @@ Leave out `--bg` for a transparent background.
 | It wakes up, then naps again a moment later    | Something writes `idle` or an empty file. A batch `echo.>` or an empty `Set-Content` makes an empty file. |
 | It keeps typing after the job ended            | The job stopped before it wrote `idle`. Use `finally` / `trap` ([section 6](#always-go-back-to-idle)). |
 | The text is cut off with "…"                   | Only two lines fit. Shorten the line and put the important words first.        |
+| The kitten is on the wrong screen             | Right-click it, open **Monitor** and pick the display. To forget the choice, delete `kitten-assistant.ini` next to the exe. |
 | Nothing happens when I start it                | A kitten is already running (maybe dragged off-screen): run `kitten-assistant quit`, then start it again. |
 | An error message box appears                   | The message is also in `%TEMP%\kitten-assistant.log`.                           |
 | My screenshot has no kitten                    | Use `snapshot` instead (section 10).                                           |

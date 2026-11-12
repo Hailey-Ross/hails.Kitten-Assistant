@@ -13,20 +13,32 @@ you are still working and on what.
 
 ## Setup check (once per session)
 
-1. Find the exe. Try `kitten-assistant help` (on the PATH). If that fails, look for
-   `kitten-assistant.exe` in the folder the user named, or ask the user once where it is,
-   then use the full path for the rest of the session.
-2. Find the status file. If `KITTEN_STATUS` is set, use it. Otherwise the default is
-   `status.txt` next to the exe, which `kitten-assistant say` / `idle` use automatically. If
-   the user gave a path, pass it as `--status <path>` on every call.
-3. Check the kitten is running:
+1. **Find the exe.** Check without running it: `Get-Command kitten-assistant` (PowerShell) or
+   `command -v kitten-assistant` (bash). Do not run `kitten-assistant help` to check: it is a
+   windowed app, so `help` opens a message box on the user's screen and prints nothing to your
+   terminal. If it is not on the `PATH`, look for `kitten-assistant.exe` in the folder the
+   user named, or ask the user once where it is, then use the full path for the rest of the
+   session.
+2. **Find the status file the running kitten watches.** Your `say` / `idle` must write the
+   same file, or the kitten never sees them. Check in this order:
+   1. a path the user gave you;
+   2. the `--status` option of the running kitten, read from its command line:
+      `(Get-CimInstance Win32_Process -Filter "Name='kitten-assistant.exe'").CommandLine`;
+   3. the `KITTEN_STATUS` environment variable;
+   4. `status.txt` next to the exe (the default).
+
+   If you found it through 1 or 2, pass `--status "<path>"` on every `say` / `idle` call.
+3. **Check the kitten is running:**
    - PowerShell: `Get-Process kitten-assistant -ErrorAction SilentlyContinue`
    - bash: `tasklist //FI "IMAGENAME eq kitten-assistant.exe" | grep -i kitten`
 
-   If it is not running, start it detached so it does not block you (it is a single
-   instance; a second start does nothing):
-   - PowerShell: `Start-Process kitten-assistant`
-   - bash: `cmd //c start "" kitten-assistant`
+   If it is not running, start it detached so it does not block you. It is a single instance,
+   so a second start does nothing. Use the full path if it is not on the `PATH`, and add
+   `--status "<path>"` if you use a custom file:
+   - PowerShell: `Start-Process "<path>\kitten-assistant.exe"`
+   - bash: `"<path>/kitten-assistant.exe" &` (it is a windowed app and does not hold the
+     terminal). Avoid `cmd //c start "" ...` from Git Bash: the empty title argument gets
+     mangled and Windows shows a "cannot find" error dialog.
 
    If the user has said they do not want it started for them, skip this and only write the
    status file.
@@ -46,12 +58,22 @@ you are still working and on what.
 Always end with `idle`. A kitten that keeps typing after you stopped tells the user something
 false. If a step fails, still set `idle` before you report the failure.
 
-Commands (add `--status <path>` if you found one in the setup check):
+Commands (add `--status "<path>"` if the setup check found one):
 
 ```
 kitten-assistant say "Fixing login timeout: running tests"
 kitten-assistant idle
 ```
+
+**In PowerShell, pipe each call to `Out-Null`:**
+
+```powershell
+kitten-assistant say "Fixing login timeout: running tests" | Out-Null
+```
+
+PowerShell does not wait for a windowed app, so without it the call returns before the file is
+written; a check or a second write straight after it can race the first. Bash, Python and
+other shells wait normally.
 
 Prefer the exe's `say` / `idle` over writing the file yourself; it writes plain text with no
 encoding surprises. If you write the file directly, write only the line (UTF-8, a byte order
@@ -59,14 +81,16 @@ mark is fine) and replace the file, do not append.
 
 ## How to write the line
 
-- **Short:** about 50 characters. The bubble shows two lines and cuts the rest with "…".
+- **Short:** about 50 characters. The bubble shows two lines of about 35 characters and wraps
+  at word breaks, then cuts the rest with "…"; past about 65 characters the end is usually lost.
 - **Most useful words first:** `Tests: 3 of 12 suites` beats `Currently running the test suites`.
 - **Plain words the user recognises:** the task they asked for, the step you are on. No
   internal ids or tool names unless the user uses them too.
 - **Progress when you know it:** `Refactor: file 4 of 9`, `Build 2 of 3 targets`.
 - **Change the text for each step:** the bubble timer restarts when the text changes, so each
   step shows its own time. Rewriting the same text keeps the timer running; do that while one
-  long step is still going.
+  long step is still going. The same text left over from an earlier job also keeps counting,
+  so start a new job with a line that differs from the last one.
 - **Nothing private:** the line sits on the user's screen where others may see it. No
   passwords, tokens, personal data or full private paths.
 - **Don't spam:** one write per real step change is enough. Updates faster than every 2 seconds
@@ -85,12 +109,18 @@ kitten-assistant idle
 
 There is one kitten and one line. If more than one assistant or job could write to it, only
 the one the user started most recently (or the one the user named) owns it. Do not overwrite a
-line you did not write unless the user asked you to take over. When you are done, set `idle`
-only if the line is still yours (read the file first; if it holds another job's line, leave
-it).
+line you did not write unless the user asked you to take over. Remember the last line you
+wrote. When you are done, read the file first and set `idle` only if it still holds that line;
+if it holds another job's line, leave it.
+
+A line can also be left over from a job that has ended, for example an earlier session that
+stopped without writing `idle`. If you are not sure it is still live, ask the user before
+clearing it.
 
 ## Cleanup
 
 - Leave the kitten running when you finish; the user decides when to close it
   (`kitten-assistant quit`).
-- Do not leave temporary status files behind if you created a custom one only for a test.
+- Do not leave temporary status files behind if you created a custom one only for a test. A
+  `say` without `--status` writes `status.txt` next to the exe, so a stray one there usually
+  means a call missed the option.
