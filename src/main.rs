@@ -101,6 +101,15 @@ fn read_status(p: &Path) -> String {
         .unwrap_or_default()
 }
 
+/// Seconds since the status file was last written; 0 if unknown.
+fn status_age(p: &Path) -> f64 {
+    std::fs::metadata(p)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|m| m.elapsed().ok())
+        .map_or(0.0, |d| d.as_secs_f64())
+}
+
 fn log_path() -> PathBuf {
     std::env::temp_dir().join("kitten-assistant.log")
 }
@@ -221,6 +230,7 @@ mod win {
         old: HGDIOBJ,
         bits: *mut u8,
         frame_ms: u32,
+        first_poll: bool,
     }
 
     thread_local! {
@@ -241,7 +251,8 @@ mod win {
 
         fn poll(&mut self) {
             let t = self.t();
-            self.scene.set_status(&read_status(&self.status), t);
+            let age = if std::mem::take(&mut self.first_poll) { status_age(&self.status) } else { 0.0 };
+            self.scene.set_status_aged(&read_status(&self.status), t, age);
             // smooth while typing, lighter while napping
             let ms = if self.scene.busy { 33 } else { 66 };
             if ms != self.frame_ms {
@@ -543,6 +554,7 @@ mod win {
                 old,
                 bits: bits as *mut u8,
                 frame_ms: 0,
+                first_poll: true,
             };
             app.poll();
             app.frame();

@@ -60,7 +60,8 @@ Details that matter when you write the file yourself:
 - **The timer restarts only when the text changes.** Writing the same line again keeps the
   current count. Writing a different line (or going idle and back) starts again at
   "just started". The bubble then counts "1 min so far", "2 min so far", up to
-  "1 h 5 min so far" and beyond.
+  "1 h 5 min so far" and beyond. After a restart of the kitten, the count starts from when
+  the status file was last written.
 - **Long text is cut to two lines** with "…" at the end. Short lines read best: about 50
   characters fit. Put the most useful words first ("Tests: 3 of 12 suites" rather than
   "Currently running the test suites, 3 of 12").

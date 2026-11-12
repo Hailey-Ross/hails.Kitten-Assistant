@@ -133,10 +133,15 @@ impl Scene {
 
     /// First line of the status file: text = busy with that, empty or "idle" = nap.
     pub fn set_status(&mut self, s: &str, t: f64) {
+        self.set_status_aged(s, t, 0.0);
+    }
+
+    /// Like `set_status`, but new busy text counts as already `age` seconds old.
+    pub fn set_status_aged(&mut self, s: &str, t: f64, age: f64) {
         let s = s.trim();
         let busy = !s.is_empty() && !s.eq_ignore_ascii_case("idle");
         if busy && (!self.busy || s != self.task) {
-            self.since = t;
+            self.since = t - age.max(0.0);
         }
         self.busy = busy;
         self.task = if busy { s.to_string() } else { String::new() };
