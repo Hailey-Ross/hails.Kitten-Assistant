@@ -773,10 +773,19 @@ impl Scene {
         let twitch = if (0.0..1.0).contains(&tw) { (tw * PI).sin() * 4.0 } else { 0.0 };
 
         let cheer = self.cheer(t);
+        // a sip or refill that has started always finishes, whatever the mood does meanwhile (only sleep ends it),
+        // and while it runs it owns the paws: the mood's own arms (chin, gamepad) wait
+        let rp = ((t - self.refill_start) / REFILL_SECS) as f32;
+        let refill = (busy && (0.0..1.0).contains(&rp)).then_some(rp);
+        // a refill ends with a sip of the fresh coffee
+        let after = ((t - self.refill_start - REFILL_SECS) / SIP_SECS) as f32;
+        let sp = if (0.0..1.0).contains(&after) { after } else { ((t - self.sip_start) / SIP_SECS) as f32 };
+        let sip = (busy && (0.0..1.0).contains(&sp)).then_some(sp);
+        let coffee = sip.is_some() || refill.is_some();
         let typing = busy && self.mood.types();
-        let waiting = busy && self.mood.chin();
+        let waiting = busy && self.mood.chin() && refill.is_none();
         let problem = busy && self.mood == Mood::Problem;
-        let testing = busy && self.mood == Mood::Testing;
+        let testing = busy && self.mood == Mood::Testing && !coffee;
         let researching = busy && self.mood == Mood::Researching;
         let round = (t - self.since).max(0.0) % TEST_ROUND;
         let notes = (testing && round > TEST_ROUND - NOTES_SECS).then(|| ((round - (TEST_ROUND - NOTES_SECS)) / NOTES_SECS) as f32);
@@ -867,7 +876,7 @@ impl Scene {
             r = Paw { x: CX + 9.0, lift: 0.0, key: None, down: false };
         }
         // a rare sip of coffee: a short break, then straight back to the mood (not with both paws on a controller)
-        let hands_free = !testing;
+        let hands_free = self.mood != Mood::Testing;
         if busy && t > self.next_sip {
             if hands_free {
                 // now and then the mug turns out to be empty: a refill instead of a sip
@@ -879,12 +888,6 @@ impl Scene {
             }
             self.next_sip = t + 15.0 + self.rand() * 20.0;
         }
-        // a refill ends with a sip of the fresh coffee
-        let after = ((t - self.refill_start - REFILL_SECS) / SIP_SECS) as f32;
-        let sp = if (0.0..1.0).contains(&after) { after } else { ((t - self.sip_start) / SIP_SECS) as f32 };
-        let sip = (busy && hands_free && (0.0..1.0).contains(&sp)).then_some(sp);
-        let rp = ((t - self.refill_start) / REFILL_SECS) as f32;
-        let refill = (busy && hands_free && (0.0..1.0).contains(&rp)).then_some(rp);
         let mug = match refill {
             Some(p) => refill_mug(p, hy),
             None => sip.map_or(MUG_HOME, |p| mug_at(p, hy)),
@@ -1044,7 +1047,7 @@ impl Scene {
         self.computer(&mut c, tf, p);
         self.body(&mut c, p);
         self.desk(&mut c);
-        let testing = self.busy && self.mood == Mood::Testing;
+        let testing = self.busy && self.mood == Mood::Testing && p.sip.is_none() && p.refill.is_none();
         if testing {
             self.notepad(&mut c, tf, p);
         }
@@ -1098,14 +1101,14 @@ impl Scene {
         if self.busy && self.mood == Mood::Researching {
             self.glasses(&mut c, p);
         }
-        if let Some((k, seed)) = p.plan.filter(|(k, _)| *k < 1.0) {
+        if let Some((k, seed)) = p.plan.filter(|(k, _)| *k < 1.0 && p.refill.is_none_or(|r| r < 0.40)) {
             // the marker in the drawing paw, its tip on the board (put down while the finished drawing is admired)
             let (tx, ty) = plan_strokes(k, seed).1;
             let (px, py) = (p.l.x + PAW_W / 2.0, 181.0 - p.l.lift + 6.5);
             c.stroke(&line(px, py, tx, ty), INK, 5.0);
             c.stroke(&line(px, py, tx + 1.5, ty + 1.7), Rgba::rgb(60, 110, 200), 3.0);
         }
-        if self.busy && self.mood.chin() {
+        if self.busy && self.mood.chin() && p.refill.is_none() {
             // chin propped on an upright forearm: elbow on the keyboard, paw cupping the jaw,
             // drawn in front of the head
             let (px, py) = (CX - 33.0, p.hy + 12.0);
@@ -2112,7 +2115,7 @@ impl Scene {
     fn arms(&self, c: &mut Canvas, p: &Pose) {
         let rest_y = if self.busy { 181.0 } else { 179.0 };
         // while waiting the left arm props the chin and is drawn after the head
-        let chin = self.busy && self.mood.chin();
+        let chin = self.busy && self.mood.chin() && p.refill.is_none();
         for (paw, sx) in [(p.l, -24.0), (p.r, 24.0)] {
             // the sipping arm is drawn after the head too, so it does not slip under the face
             if p.refill.is_some() || (chin && sx < 0.0) || (p.sip.is_some() && sx > 0.0) {
