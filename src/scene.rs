@@ -494,8 +494,38 @@ const SCREENS: usize = 5;
 
 /// Seconds a coffee sip takes.
 const SIP_SECS: f64 = 2.4;
+/// Seconds an empty-mug refill takes: lift, nothing there, annoyed, kettle from off the picture, pour, pleased.
+const REFILL_SECS: f64 = 7.0;
+
+/// Where the right paw holds the empty mug out for the kettle (mug center), in front of the chest on the left.
+const REFILL_HOLD: (f32, f32) = (78.0, 176.0);
+
+fn lerp2(a: (f32, f32), b: (f32, f32), k: f32) -> (f32, f32) {
+    let k = smooth(k);
+    (a.0 + (b.0 - a.0) * k, a.1 + (b.1 - a.1) * k)
+}
+
+/// The mug during a refill (0..1): up to the mouth, a look inside, over to the left for the kettle, held there while
+/// the kettle comes and goes, then back home.
+fn refill_mug(p: f32, hy: f32) -> (f32, f32) {
+    if p < 0.20 {
+        mug_at(p / 0.20 * 0.40, hy)
+    } else if p < 0.30 {
+        mug_at(0.5, hy)
+    } else if p < 0.40 {
+        lerp2(mug_at(0.5, hy), REFILL_HOLD, (p - 0.30) / 0.10)
+    } else if p < 0.90 {
+        REFILL_HOLD
+    } else if p < 0.96 {
+        lerp2(REFILL_HOLD, MUG_HOME, (p - 0.90) / 0.06)
+    } else {
+        MUG_HOME
+    }
+}
 /// Center of the mug on the desk.
 const MUG_HOME: (f32, f32) = (179.0, 200.0);
+/// How much bigger the mug is drawn than its outline numbers.
+const MUG_SCALE: f32 = 1.35;
 
 /// A light muzzle / tummy over patches: solid in the middle with a soft edge (`grow` 1.0 keeps the
 /// soft edge inside the given oval), so the patches around it fade into it.
@@ -559,6 +589,14 @@ pub struct Pose {
     notes: Option<f32>,
     /// 0..1 of the whiteboard drawn while planning (1 = done, held until the round ends), None in other moods
     plan: Option<(f32, u32)>,
+    /// 0..1 through an empty-mug refill, None outside one
+    refill: Option<f32>,
+    /// the kettle in the paw during a refill: the paw's center and the kettle's tilt
+    kettle: Option<(f32, f32, f32)>,
+    /// how full the mug is (0 empty .. 1)
+    fill: f32,
+    /// the annoyed mark by the head (0 or 1)
+    anger: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -590,6 +628,8 @@ pub struct Scene {
     /// when the next coffee sip starts, and when the current one started
     pub next_sip: f64,
     pub sip_start: f64,
+    /// when the current empty-mug refill started
+    pub refill_start: f64,
     twitch_start: f64,
     twitch_ear: f32,
     lpx: f32,
@@ -624,6 +664,7 @@ impl Scene {
             coat: COATS[0],
             patch_seed: 1,
             sip_start: -100.0,
+            refill_start: -100.0,
             twitch_start: -10.0,
             twitch_ear: 1.0,
             lpx: -1.0,
@@ -657,6 +698,10 @@ impl Scene {
             mug: MUG_HOME,
             notes: None,
             plan: None,
+            refill: None,
+            kettle: None,
+            fill: 1.0,
+            anger: 0.0,
         };
         let mut c = Canvas::new_at(pix, sc, cx - CX * sc, cy + 6.0 * sc);
         self.head(&mut c, &p);
@@ -820,13 +865,25 @@ impl Scene {
         // a rare sip of coffee: a short break, then straight back to the mood (not with both paws on a controller)
         let hands_free = !testing;
         if busy && t > self.next_sip {
-            self.sip_start = if hands_free { t } else { -100.0 };
+            if hands_free {
+                // now and then the mug turns out to be empty: a refill instead of a sip
+                if self.rand() < 0.25 {
+                    self.refill_start = t;
+                } else {
+                    self.sip_start = t;
+                }
+            }
             self.next_sip = t + 15.0 + self.rand() * 20.0;
         }
         let sp = ((t - self.sip_start) / SIP_SECS) as f32;
         let sip = (busy && hands_free && (0.0..1.0).contains(&sp)).then_some(sp);
-        let mug = sip.map_or(MUG_HOME, |p| mug_at(p, hy));
-        if sip.is_some() && typing {
+        let rp = ((t - self.refill_start) / REFILL_SECS) as f32;
+        let refill = (busy && hands_free && (0.0..1.0).contains(&rp)).then_some(rp);
+        let mug = match refill {
+            Some(p) => refill_mug(p, hy),
+            None => sip.map_or(MUG_HOME, |p| mug_at(p, hy)),
+        };
+        if (sip.is_some() || refill.is_some()) && typing {
             // the typing paw rests while the other one holds the mug
             l = Paw { x: CX - 29.0, lift: 0.0, key: None, down: false };
         }
@@ -851,13 +908,63 @@ impl Scene {
             r = Paw { x: r.x + (gx - r.x) * w, lift: 181.0 - py, key: None, down: false };
             self.rpx = r.x;
         }
-        l.down = typing && sip.is_none() && l.lift < 1.0;
-        r.down = typing && sip.is_none() && r.lift < 1.0;
+        // the refill: the right paw keeps hold of the mug (up to the mouth, then out to the left for the kettle, then
+        // home); the left paw reaches out of the picture on the left, comes back with the kettle, pours, takes it
+        // away and comes back to rest (paw centers)
+        let (mut kettle, mut fill, mut anger) = (None, 1.0, 0.0);
+        if let Some(p) = refill {
+            let grip = |m: (f32, f32)| (m.0 + 2.0, m.1 + 9.5);
+            let center = |w: &Paw| (w.x + PAW_W / 2.0, 181.0 - w.lift + 6.5);
+            let (rest_r, rest_l) = (center(&r), center(&l));
+            let (off, pour) = ((-30.0, 118.0), (39.0, 138.0));
+            let rc = if p < 0.04 {
+                lerp2(rest_r, grip(mug), p / 0.04)
+            } else if p < 0.96 {
+                grip(mug)
+            } else {
+                lerp2(grip(MUG_HOME), rest_r, (p - 0.96) / 0.04)
+            };
+            r = Paw { x: rc.0 - PAW_W / 2.0, lift: 181.0 - (rc.1 - 6.5), key: None, down: false };
+            self.rpx = r.x;
+            if p >= 0.40 {
+                let lc = if p < 0.52 {
+                    lerp2(rest_l, off, (p - 0.40) / 0.12)
+                } else if p < 0.62 {
+                    lerp2(off, pour, (p - 0.52) / 0.10)
+                } else if p < 0.80 {
+                    (pour.0, pour.1 + 0.8 * ((p - 0.62) * 40.0).sin())
+                } else if p < 0.90 {
+                    lerp2(pour, off, (p - 0.80) / 0.10)
+                } else {
+                    lerp2(off, rest_l, (p - 0.90) / 0.10)
+                };
+                l = Paw { x: lc.0 - PAW_W / 2.0, lift: 181.0 - (lc.1 - 6.5), key: None, down: false };
+                self.lpx = l.x;
+                if (0.52..0.90).contains(&p) {
+                    let tilt = if p < 0.62 {
+                        0.0
+                    } else if p < 0.68 {
+                        0.55 * smooth((p - 0.62) / 0.06)
+                    } else if p < 0.74 {
+                        0.55
+                    } else if p < 0.80 {
+                        0.55 * (1.0 - smooth((p - 0.74) / 0.06))
+                    } else {
+                        0.0
+                    };
+                    kettle = Some((lc.0, lc.1, tilt));
+                }
+            }
+            fill = if p < 0.66 { 0.0 } else { ((p - 0.66) / 0.10).min(1.0) };
+            anger = if (0.26..0.55).contains(&p) { 1.0 } else { 0.0 };
+        }
+        l.down = typing && sip.is_none() && refill.is_none() && l.lift < 1.0;
+        r.down = typing && sip.is_none() && refill.is_none() && r.lift < 1.0;
 
         // looks at the screen while typing and glances back at you every so often;
         // while waiting it looks off to the side now and then
         let drinking = sip.is_some_and(|p| (0.38..0.66).contains(&p));
-        let look = if sip.is_some() {
+        let look = if sip.is_some() || refill.is_some() {
             0.0
         } else if typing && (t % 9.0) > 1.3 {
             2.5
@@ -880,30 +987,39 @@ impl Scene {
             if look > 0.0 { 0.25 } else { 0.5 }
         } else if notes.is_some() {
             0.35
+        } else if refill.is_some_and(|p| (0.30..0.58).contains(&p)) {
+            // a glare at the empty mug
+            0.4
         } else if researching {
             // reading closely over the glasses
             0.2
         } else {
             0.0
         };
+        // content again once the mug is full
+        let pleased = refill.is_some_and(|p| p > 0.9);
 
         Pose {
             hy,
             sway,
             // asleep, or squeezed shut with joy while cheering
-            eyes_closed: !busy || blink || drinking,
+            eyes_closed: !busy || blink || drinking || pleased,
             look,
             twitch,
             twitch_ear: self.twitch_ear,
             l,
             r,
             cheer,
-            droop: if problem { 1.0 } else { 0.0 },
+            droop: if problem { 1.0 } else { 0.7 * anger },
             lid: if drinking { 0.0 } else { lid },
             sip,
             mug,
             notes,
             plan,
+            refill,
+            kettle,
+            fill,
+            anger,
         }
     }
 
@@ -922,8 +1038,10 @@ impl Scene {
         if testing {
             self.notepad(&mut c, tf, p);
         }
-        if p.sip.is_none() {
-            self.mug(&mut c, tf, MUG_HOME);
+        // the mug sits on the desk unless a paw holds it
+        let mug_held = p.sip.is_some() || p.refill.is_some_and(|r| r < 0.96);
+        if !mug_held {
+            self.mug(&mut c, tf, MUG_HOME, p.fill);
         }
         // the keyboard is put away while testing: the gamepad is held in front of the arms, the paws wrapped over
         // its grips
@@ -990,14 +1108,39 @@ impl Scene {
                 c.stroke(&line(px + dx, py + dy, px + dx + 3.5, py + dy), INK.fade(0.8), 1.1);
             }
         }
-        if p.sip.is_some() {
+        if p.refill.is_some() {
+            // the left arm goes behind the mug the right paw holds out (its paw and the kettle come after it)
+            let py = 181.0 - p.l.lift;
+            let arm = line(CX - 24.0, p.hy + 46.0, p.l.x + PAW_W / 2.0, py + 5.0);
+            c.stroke(&arm, INK, 14.5);
+            c.stroke(&arm, self.coat.fur, 10.5);
+        }
+        if p.sip.is_some() || p.refill.is_some() {
             // the arm, paw and mug in front of the head; the paw holds the mug from below
             let py = 181.0 - p.r.lift;
             let arm = line(CX + 24.0, p.hy + 46.0, p.r.x + PAW_W / 2.0, py + 5.0);
             c.stroke(&arm, INK, 14.5);
             c.stroke(&arm, self.coat.fur, 10.5);
             c.blob(&oval(p.r.x, py, PAW_W, 13.0), self.coat.fur);
-            self.mug(&mut c, tf, p.mug);
+            if mug_held {
+                self.mug(&mut c, tf, p.mug, p.fill);
+            }
+        }
+        if p.refill.is_some() {
+            // the kettle and the left paw over everything, so it pours from above
+            let py = 181.0 - p.l.lift;
+            if let Some(k) = p.kettle {
+                self.kettle(&mut c, k, p.mug);
+            }
+            c.blob(&oval(p.l.x, py, PAW_W, 13.0), self.coat.fur);
+        }
+        if p.anger > 0.0 {
+            // the annoyed mark: four little brackets, pulsing
+            let (ax, ay) = (CX + 40.0, p.hy - 32.0);
+            let s = 1.0 + 0.18 * (tf * 12.0).sin();
+            for (sx, sy) in [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+                c.stroke(&quad(ax + sx * 1.6, ay + sy * 6.0 * s, ax + sx * 1.6, ay + sy * 1.6, ax + sx * 6.0 * s, ay + sy * 1.6), RED, 2.2);
+            }
         }
         self.sparkles(&mut c, p);
         if let Some(k) = p.cheer {
@@ -1866,20 +2009,57 @@ impl Scene {
         c.stroke(&line(240.0, 212.0, 276.0, 212.0), WOOD_FRONT.fade(0.5), 1.0);
     }
 
-    fn mug(&self, c: &mut Canvas, t: f32, at: (f32, f32)) {
+    /// The kettle in the left paw, held by its handle at (hx, hy), spout to the right, tipped by 	ilt (radians,
+    /// positive pours to the right), with the stream into the mug at mug while it is tipped far enough.
+    fn kettle(&self, c: &mut Canvas, (hx, hy, tilt): (f32, f32, f32), mug: (f32, f32)) {
+        let (s, k) = tilt.sin_cos();
+        // laid out spout-left and mirrored; drawn half again as big as its outline numbers, so it reads at the
+        // kitten's size
+        let at = |x: f32, y: f32| (hx + 1.5 * (-x * k - y * s), hy + 1.5 * (-x * s + y * k));
+        let red = Rgba::rgb(222, 96, 84);
+        let body: Vec<(f32, f32)> = (0..28).map(|i| {
+            let a = i as f32 / 28.0 * 2.0 * PI;
+            at(-13.0 + 11.5 * a.cos(), 6.0 + 9.0 * a.sin())
+        }).collect();
+        if tilt > 0.4 {
+            let tip = at(-29.0, -2.0);
+            let (mx, my) = (mug.0, mug.1 - 12.0);
+            c.stroke(&quad(tip.0, tip.1, tip.0 + 1.5, (tip.1 + my) / 2.0, mx, my), Rgba::rgb(120, 76, 52), 2.4);
+        }
+        c.blob(&poly(&[at(-21.0, 3.0), at(-30.0, -3.5), at(-28.0, -5.0), at(-19.0, -1.0)]), red);
+        c.blob(&poly(&body), red);
+        c.fill(&poly(&[at(-20.0, 1.0), at(-16.0, -1.5), at(-12.0, -0.5), at(-17.0, 4.0)]), WHITE.fade(0.35));
+        c.blob(&poly(&[at(-18.0, -2.0), at(-8.0, -2.0), at(-9.0, -4.5), at(-17.0, -4.5)]), Rgba::rgb(200, 80, 72));
+        let knob = at(-13.0, -6.0);
+        c.blob(&circle(knob.0, knob.1, 1.8), Rgba::rgb(60, 60, 70));
+        let (a, b, e) = (at(-4.0, 0.5), at(2.0, -2.0), at(-2.5, 11.0));
+        c.stroke(&quad(a.0, a.1, b.0, b.1 + 6.0, e.0, e.1), INK, 4.4);
+        c.stroke(&quad(a.0, a.1, b.0, b.1 + 6.0, e.0, e.1), Rgba::rgb(60, 60, 70), 2.4);
+    }
+
+    /// The mug at `at`, `fill` full (0 shows its empty inside).
+    fn mug(&self, c: &mut Canvas, t: f32, at: (f32, f32), fill: f32) {
         let (dx, dy) = (at.0 - MUG_HOME.0, at.1 - MUG_HOME.1);
-        let handle = oval(181.0 + dx, 197.0 + dy, 8.0, 8.0);
-        c.stroke(&handle, INK, 4.6);
-        c.stroke(&handle, MUG, 2.2);
-        c.blob(&rrect(173.0 + dx, 193.0 + dy, 12.0, 15.0, 3.0), MUG);
-        c.fill(&oval(174.5 + dx, 193.5 + dy, 9.0, 3.0), Rgba::rgb(120, 76, 52));
-        c.stroke(&line(175.0 + dx, 201.0 + dy, 183.0 + dx, 201.0 + dy), WHITE.fade(0.7), 1.6);
-        // steam rises only while the mug sits on the desk
-        if self.busy && dx == 0.0 && dy == 0.0 {
+        // drawn MUG_SCALE times its outline numbers, grown from the middle of its bottom (so it still sits on the desk)
+        let s = MUG_SCALE;
+        let m = |x: f32, y: f32| (179.0 + dx + (x - 179.0) * s, 208.0 + dy + (y - 208.0) * s);
+        let (hx, hy) = m(181.0, 197.0);
+        let handle = oval(hx, hy, 8.0 * s, 8.0 * s);
+        c.stroke(&handle, INK, 4.6 * s);
+        c.stroke(&handle, MUG, 2.2 * s);
+        let (bx, by) = m(173.0, 193.0);
+        c.blob(&rrect(bx, by, 12.0 * s, 15.0 * s, 3.0 * s), MUG);
+        let (ix, iy) = m(174.5, 193.5);
+        c.fill(&oval(ix, iy, 9.0 * s, 3.0 * s), Rgba::rgb(86, 150, 182));
+        c.fill(&oval(ix, iy, 9.0 * s, 3.0 * s), Rgba::rgb(120, 76, 52).fade(fill));
+        let (l0, l1) = (m(175.0, 201.0), m(183.0, 201.0));
+        c.stroke(&line(l0.0, l0.1, l1.0, l1.1), WHITE.fade(0.7), 1.6 * s);
+        // steam rises only while a full mug sits on the desk
+        if self.busy && dx == 0.0 && dy == 0.0 && fill >= 1.0 {
             for i in 0..2 {
                 let ph = (t * 0.45 + i as f32 * 0.5).fract();
-                let x0 = 177.0 + i as f32 * 4.0;
-                let y0 = 190.0 - ph * 16.0;
+                let (x0, y0) = m(177.0 + i as f32 * 4.0, 190.0);
+                let y0 = y0 - ph * 18.0;
                 let a = (ph * PI).sin() * 0.7;
                 let wob = 2.5 * (ph * 6.0 + i as f32).sin();
                 c.stroke(&quad(x0, y0 + 6.0, x0 + wob, y0 + 3.0, x0, y0), WHITE.fade(a), 1.8);
@@ -1922,7 +2102,7 @@ impl Scene {
         let chin = self.busy && self.mood.chin();
         for (paw, sx) in [(p.l, -24.0), (p.r, 24.0)] {
             // the sipping arm is drawn after the head too, so it does not slip under the face
-            if (chin && sx < 0.0) || (p.sip.is_some() && sx > 0.0) {
+            if p.refill.is_some() || (chin && sx < 0.0) || (p.sip.is_some() && sx > 0.0) {
                 continue;
             }
             let py = rest_y - paw.lift;

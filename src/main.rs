@@ -60,6 +60,7 @@ struct Opts {
     egg: bool,
     menu: Option<String>,
     hover: Option<usize>,
+    refill: Option<f64>,
     coat: Option<String>,
     seed: Option<u32>,
 }
@@ -84,6 +85,7 @@ fn parse() -> Result<Opts, String> {
             "--sip" => o.sip = true,
             "--egg" => o.egg = true,
             "--menu" => o.menu = Some(val()?),
+            "--refill" => o.refill = Some(val()?.parse().map_err(|_| "bad --refill")?),
             "--hover" => o.hover = Some(val()?.parse().map_err(|_| "bad --hover")?),
             "--coat" => o.coat = Some(val()?),
             "--seed" => o.seed = Some(val()?.parse().map_err(|_| "bad --seed")?),
@@ -249,6 +251,10 @@ fn snapshot(o: &Opts) -> Result<(), String> {
     s.patch_seed = o.seed.unwrap_or(1);
     // no surprise sips in snapshots; --sip puts one in its drinking moment
     s.next_sip = if o.sip { t_end - 1.25 } else { f64::MAX };
+    // --refill P: that moment (0..1) of an empty-mug refill (not in the usage text)
+    if let Some(p) = o.refill {
+        s.refill_start = t_end - p * 7.0;
+    }
     if o.done {
         // the "all done!" moment, one second in
         s.set_status("job", 0.0);
