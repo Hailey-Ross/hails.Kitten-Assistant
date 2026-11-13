@@ -207,6 +207,17 @@ pub enum Mood {
     Waiting,
     /// `Failed...` / `Error...`: ears down, red X on the screen
     Problem,
+    /// `Testing...` / `Checking...`: plays a little game with a controller and jots notes, like a game tester
+    Testing,
+    /// `Building...` / `Compiling...`: types in a hard hat while a brick wall goes up on the screen
+    Building,
+    /// `Researching...` / `Reading...`: reading glasses on, leaning in to a page scrolling on the screen
+    Researching,
+    /// `Downloading...` / `Uploading...`: types while files fly between a cloud and the screen (true = up)
+    Transfer(bool),
+    /// `Thinking...` / `Planning...`: draws boxes and arrows on a whiteboard beside the desk, a checklist on the
+    /// screen
+    Thinking,
 }
 
 impl Mood {
@@ -215,9 +226,267 @@ impl Mood {
         match word.as_str() {
             "waiting" | "wait" => Mood::Waiting,
             "failed" | "fail" | "error" | "problem" => Mood::Problem,
+            "testing" | "test" | "tests" | "playtesting" | "playtest" | "checking" | "check" | "verifying" | "verify"
+            | "qa" | "autotest" | "regression" | "smoke" => Mood::Testing,
+            "building" | "build" | "rebuilding" | "rebuild" | "compiling" | "compile" | "linking" | "packaging"
+            | "bundling" => Mood::Building,
+            "researching" | "research" | "reading" | "read" | "reviewing" | "review" | "analyzing" | "analyze"
+            | "searching" | "search" | "investigating" | "investigate" | "studying" | "exploring" | "digging" => Mood::Researching,
+            "downloading" | "download" | "fetching" | "fetch" | "pulling" | "pull" | "installing" | "install"
+            | "syncing" | "sync" | "copying" | "copy" => Mood::Transfer(false),
+            "uploading" | "upload" | "pushing" | "push" | "deploying" | "deploy" | "publishing" | "publish"
+            | "backing" | "backup" => Mood::Transfer(true),
+            "thinking" | "think" | "planning" | "plan" | "designing" | "design" | "brainstorming" | "pondering" => Mood::Thinking,
             _ => Mood::Busy,
         }
     }
+
+    /// Moods that type on the keyboard.
+    fn types(self) -> bool {
+        matches!(self, Mood::Busy | Mood::Building | Mood::Transfer(_))
+    }
+
+    /// Moods that sit with the chin propped on a paw.
+    fn chin(self) -> bool {
+        matches!(self, Mood::Waiting)
+    }
+}
+
+/// Seconds of a planning round, the first `PLAN_DRAW` of them drawing on the whiteboard.
+const PLAN_ROUND: f64 = 8.5;
+const PLAN_DRAW: f64 = 6.5;
+/// The whiteboard on its easel left of the kitten: x, y, width, height.
+const BOARD: (f32, f32, f32, f32) = (0.0, 100.0, 76.0, 90.0);
+/// The part of the board the drawing uses: left of the kitten's head (x, y, width, height).
+const BOARD_ART: (f32, f32, f32, f32) = (5.0, 108.0, 50.0, 72.0);
+
+type Stroke = Vec<(f32, f32)>;
+
+/// One whiteboard drawing, picked and varied by `seed`: a flowchart, bar chart, rising line graph, mind map,
+/// roadmap with a flag, pie chart, rocket, Venn diagram or light bulb. Coordinates are pixels in the board's
+/// drawing area (`BOARD_ART`, 50 x 72), strokes in drawing order. Also returns the flowchart's box centers (for its
+/// easter egg), empty for the other drawings.
+fn plan_drawing(seed: u32) -> (Vec<Stroke>, Vec<(f32, f32)>) {
+    let mut anchors = Vec::new();
+    let r = |i: i64| (hash(seed as i64 * 977 + i) % 1000) as f32 / 1000.0;
+    let arc = |cx: f32, cy: f32, rx: f32, ry: f32, a0: f32, a1: f32| -> Stroke {
+        (0..=28).map(|i| {
+            let a = a0 + (a1 - a0) * i as f32 / 28.0;
+            (cx + rx * a.cos(), cy + ry * a.sin())
+        }).collect()
+    };
+    let rect = |x0: f32, y0: f32, x1: f32, y1: f32| vec![(x0, y0), (x1, y0), (x1, y1), (x0, y1), (x0, y0)];
+    let arrow = |out: &mut Vec<Stroke>, a: (f32, f32), b: (f32, f32)| {
+        out.push(vec![a, b]);
+        let ang = (b.1 - a.1).atan2(b.0 - a.0);
+        let head = |s: f32| (b.0 - 4.5 * (ang + s).cos(), b.1 - 4.5 * (ang + s).sin());
+        out.push(vec![head(0.45), b, head(-0.45)]);
+    };
+    let axes = || vec![(4.0, 4.0), (4.0, 66.0), (48.0, 66.0)];
+    let mut out: Vec<Stroke> = Vec::new();
+    match hash(seed as i64) % 9 {
+        0 => {
+            // flowchart: a chain of boxes, nudged left and right, joined by arrows
+            let n = 3 + (r(1) * 2.0) as usize;
+            let step = 68.0 / n as f32;
+            let boxes: Vec<(f32, f32, f32)> = (0..n).map(|i| (25.0 + (r(10 + i as i64) - 0.5) * 14.0, 2.0 + i as f32 * step, 26.0 + r(20 + i as i64) * 10.0)).collect();
+            let h = step * 0.45;
+            for (i, &(cx, y, w)) in boxes.iter().enumerate() {
+                anchors.push((cx, y + h / 2.0));
+                out.push(rect(cx - w / 2.0, y, cx + w / 2.0, y + h));
+                if let Some(&(nx, ny, _)) = boxes.get(i + 1) {
+                    arrow(&mut out, (cx, y + h), (nx, ny));
+                }
+            }
+        }
+        1 => {
+            // bar chart with a trend arrow over the bars
+            out.push(axes());
+            let n = 3 + (r(1) * 3.0) as usize;
+            let w = 40.0 / n as f32;
+            let mut tops = Vec::new();
+            for i in 0..n {
+                let x = 7.0 + i as f32 * w;
+                let h = 10.0 + r(30 + i as i64) * 46.0;
+                out.push(vec![(x, 66.0), (x, 66.0 - h), (x + w * 0.62, 66.0 - h), (x + w * 0.62, 66.0)]);
+                tops.push((x + w * 0.31, 66.0 - h - 5.0));
+            }
+            if r(2) > 0.4 {
+                arrow(&mut out, (8.0, 8.0 + r(3) * 6.0 + 30.0), (46.0, 6.0));
+            }
+        }
+        2 => {
+            // a line graph that climbs, ending in an arrow
+            out.push(axes());
+            let n = 5 + (r(1) * 3.0) as usize;
+            let pts: Vec<(f32, f32)> = (0..n).map(|i| {
+                let u = i as f32 / (n - 1) as f32;
+                (8.0 + u * 36.0, 60.0 - u * 46.0 + (r(40 + i as i64) - 0.5) * 16.0)
+            }).collect();
+            let last = pts[n - 1];
+            let before = pts[n - 2];
+            out.push(pts);
+            arrow(&mut out, before, (last.0 + 3.0, last.1 - 3.0));
+        }
+        3 => {
+            // mind map: an idea in the middle, branches out to little bubbles
+            let (cx, cy) = (25.0, 36.0);
+            out.push(arc(cx, cy, 10.0, 6.5, 0.0, 2.0 * PI));
+            let n = 4 + (r(1) * 3.0) as usize;
+            let spin = r(2) * PI;
+            for i in 0..n {
+                let a = spin + i as f32 / n as f32 * 2.0 * PI;
+                let d = 19.0 + r(50 + i as i64) * 6.0;
+                let (nx, ny) = ((cx + a.cos() * d).clamp(5.0, 45.0), (cy + a.sin() * d * 1.25).clamp(5.0, 67.0));
+                out.push(vec![(cx + a.cos() * 10.0, cy + a.sin() * 6.5), (nx - a.cos() * 4.0, ny - a.sin() * 4.0)]);
+                out.push(arc(nx, ny, 4.0, 4.0, 0.0, 2.0 * PI));
+            }
+        }
+        4 => {
+            // roadmap: a winding road of milestones up to a flag
+            let pts: Vec<(f32, f32)> = (0..4).map(|i| (if i % 2 == 0 { 12.0 } else { 38.0 } + (r(60 + i) - 0.5) * 8.0, 64.0 - i as f32 * 17.0)).collect();
+            out.push(pts.clone());
+            for &(x, y) in &pts[..3] {
+                out.push(arc(x, y, 3.0, 3.0, 0.0, 2.0 * PI));
+            }
+            let (fx, fy) = pts[3];
+            out.push(vec![(fx, fy), (fx, fy - 14.0)]);
+            out.push(vec![(fx, fy - 14.0), (fx + 10.0, fy - 10.5), (fx, fy - 7.0)]);
+        }
+        5 => {
+            // pie chart with a slice pulled out
+            let (cx, cy, rr) = (25.0, 36.0, 18.0);
+            out.push(arc(cx, cy, rr, rr, 0.0, 2.0 * PI));
+            let n = 3 + (r(1) * 2.0) as usize;
+            let mut a = r(2) * 2.0 * PI;
+            for i in 0..n {
+                out.push(vec![(cx, cy), (cx + a.cos() * rr, cy + a.sin() * rr)]);
+                a += (0.6 + r(70 + i as i64) * 1.2) * PI / n as f32 * 2.0 * 0.6;
+            }
+        }
+        6 => {
+            // a rocket, ready for launch
+            let tilt = (r(1) - 0.5) * 6.0;
+            out.push(vec![(25.0 + tilt, 4.0), (33.0, 22.0), (33.0, 48.0), (17.0, 48.0), (17.0, 22.0), (25.0 + tilt, 4.0)]);
+            out.push(arc(25.0, 25.0, 4.0, 4.0, 0.0, 2.0 * PI));
+            out.push(vec![(17.0, 38.0), (10.0, 52.0), (17.0, 48.0)]);
+            out.push(vec![(33.0, 38.0), (40.0, 52.0), (33.0, 48.0)]);
+            out.push(vec![(20.0, 50.0), (21.5, 60.0), (25.0, 54.0), (28.5, 64.0), (30.0, 50.0)]);
+        }
+        7 => {
+            // Venn diagram, two or three circles
+            let three = r(1) > 0.5;
+            let rr = 13.0;
+            out.push(arc(18.0, 30.0, rr, rr, 0.0, 2.0 * PI));
+            out.push(arc(32.0, 30.0, rr, rr, 0.0, 2.0 * PI));
+            if three {
+                out.push(arc(25.0, 44.0, rr, rr, 0.0, 2.0 * PI));
+            }
+            out.push(vec![(23.0, 34.0 + if three { 3.0 } else { 0.0 }), (25.0, 36.5 + if three { 3.0 } else { 0.0 }), (28.0, 31.0 + if three { 3.0 } else { 0.0 })]);
+        }
+        _ => {
+            // a light bulb idea, rays and all
+            let (cx, cy) = (25.0, 28.0);
+            out.push(arc(cx, cy, 14.0, 14.0, 0.75 * PI, 2.25 * PI));
+            out.push(vec![(cx - 9.9, cy + 9.9), (cx - 6.0, cy + 20.0), (cx + 6.0, cy + 20.0), (cx + 9.9, cy + 9.9)]);
+            out.push(vec![(cx - 6.0, cy + 24.0), (cx + 6.0, cy + 24.0)]);
+            out.push(vec![(cx - 4.0, cy + 28.0), (cx + 4.0, cy + 28.0)]);
+            out.push(vec![(cx - 4.0, cy + 6.0), (cx - 2.0, cy), (cx, cy + 6.0), (cx + 2.0, cy), (cx + 4.0, cy + 6.0)]);
+            for i in 0..5 {
+                let a = PI * (1.1 + 0.2 * i as f32) + (r(80 + i) - 0.5) * 0.1;
+                out.push(vec![(cx + a.cos() * 18.0, cy + a.sin() * 18.0), (cx + a.cos() * 23.0, cy + a.sin() * 23.0)]);
+            }
+        }
+    }
+    (out, anchors)
+}
+
+/// Whether this round's whiteboard drawing gets its easter egg (about 6 rounds in 10).
+fn plan_egg(seed: u32) -> bool {
+    hash(seed as i64 * 31 + 7) % 10 < 6
+}
+
+/// The whiteboard drawing for `seed`, drawn `k` (0..1) of the way, and where the marker's tip is (board pixels).
+fn plan_strokes(k: f32, seed: u32) -> (Vec<Stroke>, (f32, f32)) {
+    let (ax, ay, ..) = BOARD_ART;
+    let all: Vec<Stroke> = plan_drawing(seed).0.into_iter().map(|s| s.into_iter().map(|(x, y)| (ax + x, ay + y)).collect()).collect();
+    let seg = |a: (f32, f32), b: (f32, f32)| ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
+    let total: f32 = all.iter().flat_map(|s| s.windows(2).map(|w| seg(w[0], w[1]))).sum();
+    let mut left = total * k.clamp(0.0, 1.0);
+    let mut out = Vec::new();
+    let mut tip = all[0][0];
+    for s in &all {
+        if left <= 0.0 {
+            break;
+        }
+        let mut part = vec![s[0]];
+        for w in s.windows(2) {
+            let d = seg(w[0], w[1]);
+            if left >= d {
+                part.push(w[1]);
+                left -= d;
+            } else {
+                let u = left / d;
+                part.push((w[0].0 + (w[1].0 - w[0].0) * u, w[0].1 + (w[1].1 - w[0].1) * u));
+                left = 0.0;
+                break;
+            }
+        }
+        tip = *part.last().unwrap_or(&s[0]);
+        out.push(part);
+    }
+    (out, tip)
+}
+
+/// Pixel sprites for the little extras: `X` takes the given color, `K` ink.
+const INVADER_A: [&str; 8] =
+    ["..X.....X..", "...X...X...", "..XXXXXXX..", ".XX.XXX.XX.", "XXXXXXXXXXX", "X.XXXXXXX.X", "X.X.....X.X", "...XX.XX..."];
+const INVADER_B: [&str; 8] =
+    ["..X.....X..", "X..X...X..X", "X.XXXXXXX.X", "XXX.XXX.XXX", "XXXXXXXXXXX", ".XXXXXXXXX.", "..X.....X..", ".X.......X."];
+const PIXEL_CAT: [&str; 5] = ["X...X", "XXXXX", "XKXKX", "XXXXX", ".X.X."];
+
+fn pixels(c: &mut Canvas, rows: &[&str], x: f32, y: f32, px: f32, col: Rgba) {
+    for (r, line) in rows.iter().enumerate() {
+        for (k, ch) in line.chars().enumerate() {
+            let fill = match ch {
+                'X' => col,
+                'K' => INK,
+                _ => continue,
+            };
+            c.fill(&rrect(x + k as f32 * px, y + r as f32 * px, px, px, 0.0), fill);
+        }
+    }
+}
+
+/// The point `u` (0..1) of the way along a polyline.
+fn along(pts: &[(f32, f32)], u: f32) -> (f32, f32) {
+    let seg = |a: (f32, f32), b: (f32, f32)| ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
+    let total: f32 = pts.windows(2).map(|w| seg(w[0], w[1])).sum();
+    let mut left = total * u.clamp(0.0, 1.0);
+    for w in pts.windows(2) {
+        let d = seg(w[0], w[1]);
+        if left <= d && d > 0.0 {
+            let k = left / d;
+            return (w[0].0 + (w[1].0 - w[0].0) * k, w[0].1 + (w[1].1 - w[0].1) * k);
+        }
+        left -= d;
+    }
+    pts[pts.len() - 1]
+}
+
+/// Seconds of a testing round: playing, then jotting notes for the last `NOTES_SECS`.
+const TEST_ROUND: f64 = 6.5;
+const NOTES_SECS: f64 = 2.2;
+/// Where the notepad lies on the desk.
+const PAD: (f32, f32) = (12.0, 192.0);
+/// The gamepad's center while testing: held up in front of the chest.
+const PAD_Y: f32 = 183.0;
+/// The end of the right grip, in the pad's own frame (the left one mirrors it); the paws hold these.
+const GRIP: (f32, f32) = (30.0, 12.0);
+
+/// A point of the gamepad (its own frame, center 0,0) on the canvas, bobbing a little with the game.
+fn pad_point(t: f32, x: f32, y: f32) -> (f32, f32) {
+    (CX + x, PAD_Y + y + 0.8 * (t * 3.2).sin())
 }
 
 /// Typing screens: scrolling code, progress bars, equalizer, gear, line graph.
@@ -286,6 +555,10 @@ pub struct Pose {
     sip: Option<f32>,
     /// where the mug's center is
     mug: (f32, f32),
+    /// 0..1 through jotting notes while testing, None while playing (or another mood)
+    notes: Option<f32>,
+    /// 0..1 of the whiteboard drawn while planning (1 = done, held until the round ends), None in other moods
+    plan: Option<(f32, u32)>,
 }
 
 #[derive(Clone, Copy)]
@@ -305,6 +578,8 @@ pub struct Scene {
     pub mood: Mood,
     /// which typing screen shows (0..SCREENS), picked at random per status line
     pub screen: usize,
+    /// this status line's screen shows its rare little extra
+    pub egg: bool,
     /// time (seconds) the current task started
     pub since: f64,
     /// time the last job finished (busy -> idle), for the "all done!" moment
@@ -324,7 +599,7 @@ pub struct Scene {
     regular: Option<fontdue::Font>,
 }
 
-fn load_font(names: &[&str]) -> Option<fontdue::Font> {
+pub(crate) fn load_font(names: &[&str]) -> Option<fontdue::Font> {
     let dir = std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".into());
     names.iter().find_map(|n| {
         let bytes = std::fs::read(format!("{dir}\\Fonts\\{n}")).ok()?;
@@ -339,6 +614,7 @@ impl Scene {
             task: String::new(),
             mood: Mood::Busy,
             screen: 0,
+            egg: false,
             since: 0.0,
             done_at: -100.0,
             rng: 0x2545_F491_4F6C_DD1D,
@@ -359,6 +635,33 @@ impl Scene {
         }
     }
 
+    /// The kitten's head in `coat` (patches rolled by `seed`), eyes open, for the menu's color tiles: drawn at
+    /// `sc` with the middle of the face at pixel (`cx`, `cy`).
+    pub fn portrait(&mut self, coat: Coat, seed: u32, pix: &mut Pixmap, sc: f32, cx: f32, cy: f32) {
+        self.coat = coat;
+        self.patch_seed = seed;
+        let paw = Paw { x: 0.0, lift: 0.0, key: None, down: false };
+        let p = Pose {
+            hy: 0.0,
+            sway: 0.0,
+            eyes_closed: false,
+            look: 0.0,
+            twitch: 0.0,
+            twitch_ear: 1.0,
+            l: paw,
+            r: paw,
+            cheer: None,
+            droop: 0.0,
+            lid: 0.0,
+            sip: None,
+            mug: MUG_HOME,
+            notes: None,
+            plan: None,
+        };
+        let mut c = Canvas::new_at(pix, sc, cx - CX * sc, cy + 6.0 * sc);
+        self.head(&mut c, &p);
+    }
+
     /// First line of the status file: text = busy with that, empty or "idle" = nap.
     pub fn set_status(&mut self, s: &str, t: f64) {
         self.set_status_aged(s, t, 0.0);
@@ -373,6 +676,7 @@ impl Scene {
             // a new screen for the new line, never the same one twice in a row
             let pick = (self.rand() * (SCREENS - 1) as f64) as usize;
             self.screen = (self.screen + 1 + pick) % SCREENS;
+            self.egg = self.rand() < 0.1;
         }
         // a job that ends without a problem gets a little celebration
         if self.busy && !busy && self.mood != Mood::Problem {
@@ -420,12 +724,31 @@ impl Scene {
         let twitch = if (0.0..1.0).contains(&tw) { (tw * PI).sin() * 4.0 } else { 0.0 };
 
         let cheer = self.cheer(t);
-        let typing = busy && self.mood == Mood::Busy;
-        let waiting = busy && self.mood == Mood::Waiting;
+        let typing = busy && self.mood.types();
+        let waiting = busy && self.mood.chin();
         let problem = busy && self.mood == Mood::Problem;
+        let testing = busy && self.mood == Mood::Testing;
+        let researching = busy && self.mood == Mood::Researching;
+        let round = (t - self.since).max(0.0) % TEST_ROUND;
+        let notes = (testing && round > TEST_ROUND - NOTES_SECS).then(|| ((round - (TEST_ROUND - NOTES_SECS)) / NOTES_SECS) as f32);
+        let planning = busy && self.mood == Mood::Thinking;
+        let plan = planning.then(|| {
+            let into = (t - self.since).max(0.0);
+            let k = ((into % PLAN_ROUND) / PLAN_DRAW).min(1.0) as f32;
+            // a new drawing every round, different for every status line
+            (k, hash((into / PLAN_ROUND).floor() as i64 * 131 + (self.since * 7.0) as i64))
+        });
 
         let (hy, sway) = if typing {
             (126.0 + 1.0 * (tf * 2.0 * PI * 2.5).sin(), 8.0 * (tf * 2.4).sin())
+        } else if testing {
+            // leaning in to the game, bobbing along; head down over the notepad
+            if notes.is_some() { (131.0, -6.0 + 2.0 * (tf * 3.0).sin()) } else { (127.0 + 1.0 * (tf * 3.2).sin(), 5.0 * (tf * 1.8).sin()) }
+        } else if researching {
+            // leaning in to read
+            (130.0 + 0.5 * (tf * 0.9).sin(), 2.0 * (tf * 0.7).sin())
+        } else if planning {
+            (128.0 + 0.6 * (tf * 1.4).sin(), -4.0 + 2.0 * (tf * 0.8).sin())
         } else if waiting {
             // slumps a little, tail swishing slowly
             (131.0 + 0.8 * (tf * 1.2).sin(), 11.0 * (tf * 0.7).sin())
@@ -446,8 +769,38 @@ impl Scene {
             // chin propped on one paw, the other drumming: three quick taps, then a pause
             l = Paw { x: CX - 30.0, lift: 181.0 - (hy + 17.0), key: None, down: false };
             let beat = tf % 1.6;
-            let tap = if beat < 0.6 { (beat * 2.0 * PI * 5.0).sin().max(0.0) } else { 0.0 };
+            // drumming while waiting; a thinking kitten keeps the other paw still
+            let tap = if self.mood == Mood::Waiting && beat < 0.6 { (beat * 2.0 * PI * 5.0).sin().max(0.0) } else { 0.0 };
             r = Paw { x: CX + 12.0, lift: 5.0 * tap, key: None, down: false };
+        } else if testing {
+            // both paws on the controller's grips, thumbs mashing; the left one leaves to write notes
+            let mash = |k: f32| 1.4 * (tf * 2.0 * PI * k).sin().max(0.0);
+            // the paws close over the grip ends and follow the pad as it rocks (a paw's center sits 10 right of and
+            // 6.5 below its corner)
+            let hold = |s: f32, m: f32| {
+                let (gx, gy) = pad_point(tf, s * GRIP.0, GRIP.1);
+                Paw { x: gx - PAW_W / 2.0, lift: 181.0 - (gy - 6.5) + m, key: None, down: false }
+            };
+            r = hold(1.0, mash(4.3));
+            l = match notes {
+                Some(n) => {
+                    // the pencil runs along a line, then hops back to the start of the next one (its tip sits 4
+                    // right of and 10 below the paw's corner)
+                    let along = ((n * 3.0).fract() * 1.15).min(1.0);
+                    let row = (n * 3.0).floor().min(2.0);
+                    Paw { x: PAD.0 - 1.0 + 18.0 * along, lift: 181.0 - (PAD.1 - 6.0 + 4.0 * row), key: None, down: false }
+                }
+                None => hold(-1.0, mash(3.7)),
+            };
+        } else if researching {
+            // paws folded on the keyboard while it reads
+            l = Paw { x: CX - 29.0, lift: 0.0, key: None, down: false };
+            r = Paw { x: CX + 9.0, lift: 0.0, key: None, down: false };
+        } else if let Some((k, seed)) = plan.filter(|(k, _)| *k < 1.0) {
+            // the left paw draws on the whiteboard, the marker's tip 7 left of and 8 above the paw's center
+            let (tx, ty) = plan_strokes(k, seed).1;
+            l = Paw { x: tx + 7.0 - PAW_W / 2.0, lift: 181.0 - (ty + 8.0 - 6.5), key: None, down: false };
+            r = Paw { x: CX + 9.0, lift: 0.0, key: None, down: false };
         } else if cheer.is_some() {
             let wave = 3.0 * (tf * 2.0 * PI * 1.6).sin();
             l = Paw { x: CX - 50.0, lift: 46.0 + wave, key: None, down: false };
@@ -464,13 +817,14 @@ impl Scene {
             l = Paw { x: CX - 29.0, lift: 0.0, key: None, down: false };
             r = Paw { x: CX + 9.0, lift: 0.0, key: None, down: false };
         }
-        // a rare sip of coffee: a short break, then straight back to the mood
+        // a rare sip of coffee: a short break, then straight back to the mood (not with both paws on a controller)
+        let hands_free = !testing;
         if busy && t > self.next_sip {
-            self.sip_start = t;
+            self.sip_start = if hands_free { t } else { -100.0 };
             self.next_sip = t + 15.0 + self.rand() * 20.0;
         }
         let sp = ((t - self.sip_start) / SIP_SECS) as f32;
-        let sip = (busy && (0.0..1.0).contains(&sp)).then_some(sp);
+        let sip = (busy && hands_free && (0.0..1.0).contains(&sp)).then_some(sp);
         let mug = sip.map_or(MUG_HOME, |p| mug_at(p, hy));
         if sip.is_some() && typing {
             // the typing paw rests while the other one holds the mug
@@ -480,7 +834,7 @@ impl Scene {
             self.lpx = l.x;
             self.rpx = r.x;
         }
-        let k = 1.0 - (-dt * if typing || cheer.is_some() { 14.0 } else { 4.0 }).exp();
+        let k = 1.0 - (-dt * if typing || testing || planning || cheer.is_some() { 14.0 } else { 4.0 }).exp();
         if !typing || l.lift > 3.0 {
             self.lpx += (l.x - self.lpx) * k;
         }
@@ -507,14 +861,31 @@ impl Scene {
             0.0
         } else if typing && (t % 9.0) > 1.3 {
             2.5
+        } else if testing {
+            // eyes on the game, then down at the notepad
+            if notes.is_some() { -3.0 } else { 3.0 }
+        } else if researching {
+            3.5
+        } else if planning {
+            // at the whiteboard
+            -3.5
         } else if waiting && (t % 5.0) > 3.4 {
             // a glance over at the hourglass
             3.5
         } else {
             0.0
         };
-        // heavy, bored eyelids while waiting (a little less during the glance)
-        let lid = if waiting { if look > 0.0 { 0.25 } else { 0.5 } } else { 0.0 };
+        // heavy, bored eyelids while waiting (a little less during the glance); half-lidded over the notes
+        let lid = if waiting && self.mood == Mood::Waiting {
+            if look > 0.0 { 0.25 } else { 0.5 }
+        } else if notes.is_some() {
+            0.35
+        } else if researching {
+            // reading closely over the glasses
+            0.2
+        } else {
+            0.0
+        };
 
         Pose {
             hy,
@@ -531,6 +902,8 @@ impl Scene {
             lid: if drinking { 0.0 } else { lid },
             sip,
             mug,
+            notes,
+            plan,
         }
     }
 
@@ -539,16 +912,72 @@ impl Scene {
         let mut c = Canvas::new(pix, sc);
         let tf = t as f32;
         self.tail(&mut c, p);
+        if let Some((k, seed)) = p.plan {
+            self.whiteboard(&mut c, k, seed, tf);
+        }
         self.computer(&mut c, tf, p);
         self.body(&mut c, p);
         self.desk(&mut c);
+        let testing = self.busy && self.mood == Mood::Testing;
+        if testing {
+            self.notepad(&mut c, tf, p);
+        }
         if p.sip.is_none() {
             self.mug(&mut c, tf, MUG_HOME);
         }
-        self.keyboard(&mut c, p);
+        // the keyboard is put away while testing: the gamepad is held in front of the arms, the paws wrapped over
+        // its grips
+        if !testing {
+            self.keyboard(&mut c, p);
+        }
         self.arms(&mut c, p);
+        if testing {
+            self.controller(&mut c, tf, p);
+            let holding = [Some(p.r), p.notes.is_none().then_some(p.l)];
+            for (paw, s) in holding.into_iter().zip([1.0f32, -1.0]) {
+                let Some(paw) = paw else { continue };
+                // the paw wraps around the grip: its long side lies across the grip, the toes curl in against the
+                // controller (same center as the paw the pose placed)
+                let (cx, cy) = (paw.x + PAW_W / 2.0, 181.0 - paw.lift + 6.5);
+                let (gx, gy) = (s * (GRIP.0 - 19.0), GRIP.1 - 2.0);
+                let len = (gx * gx + gy * gy).sqrt();
+                let (dx, dy) = (gx / len, gy / len);
+                let (lx, ly) = (-dy, dx);
+                let (rx, ry) = (11.5, 8.5);
+                let shape: Vec<(f32, f32)> = (0..32).map(|i| {
+                    let u = i as f32 / 32.0 * 2.0 * PI;
+                    (cx + rx * u.cos() * lx + ry * u.sin() * dx, cy + rx * u.cos() * ly + ry * u.sin() * dy)
+                }).collect();
+                c.blob(&poly(&shape), self.coat.fur);
+                for k in [-4.5f32, 0.0, 4.5] {
+                    let (bx, by) = (cx + k * lx, cy + k * ly);
+                    c.stroke(&line(bx - 4.5 * dx, by - 4.5 * dy, bx - 8.0 * dx, by - 8.0 * dy), INK.fade(0.8), 1.1);
+                }
+            }
+        }
+        if let Some(n) = p.notes {
+            // the pencil in the writing paw, its tip on the paper
+            let (x, y) = (p.l.x + 4.0, 181.0 - p.l.lift + 10.0);
+            let wob = 1.2 * (n * 40.0).sin();
+            c.stroke(&line(x - 7.0, y - 13.0 + wob, x, y), INK, 4.2);
+            c.stroke(&line(x - 7.0, y - 13.0 + wob, x - 1.2, y - 2.0), SAND, 2.4);
+            c.fill(&circle(x, y, 1.1), INK);
+        }
         self.head(&mut c, p);
-        if self.busy && self.mood == Mood::Waiting {
+        if self.busy && self.mood == Mood::Building {
+            self.hard_hat(&mut c, p);
+        }
+        if self.busy && self.mood == Mood::Researching {
+            self.glasses(&mut c, p);
+        }
+        if let Some((k, seed)) = p.plan.filter(|(k, _)| *k < 1.0) {
+            // the marker in the drawing paw, its tip on the board (put down while the finished drawing is admired)
+            let (tx, ty) = plan_strokes(k, seed).1;
+            let (px, py) = (p.l.x + PAW_W / 2.0, 181.0 - p.l.lift + 6.5);
+            c.stroke(&line(px, py, tx, ty), INK, 5.0);
+            c.stroke(&line(px, py, tx + 1.5, ty + 1.7), Rgba::rgb(60, 110, 200), 3.0);
+        }
+        if self.busy && self.mood.chin() {
             // chin propped on an upright forearm: elbow on the keyboard, paw cupping the jaw,
             // drawn in front of the head
             let (px, py) = (CX - 33.0, p.hy + 12.0);
@@ -640,6 +1069,490 @@ impl Scene {
         }
     }
 
+    /// The screens of the activity moods (testing, building, researching, transferring, thinking).
+    fn mood_screen(&self, c: &mut Canvas, t: f32, mood: Mood, p: &Pose) {
+        match mood {
+            Mood::Testing => {
+                // a little platformer: the hero hops over blocks; it freezes under a pause sign while notes are taken
+                let g = t - p.notes.map_or(0.0, |n| n * NOTES_SECS as f32);
+                c.fill(&rrect(199.0, 170.0, 78.0, 11.0, 0.0), Rgba::rgb(64, 112, 82));
+                c.stroke(&line(199.0, 170.0, 277.0, 170.0), GREEN.fade(0.8), 1.4);
+                const HOP: f32 = 1.1;
+                const SPEED: f32 = 40.0;
+                let n = (g / HOP).floor();
+                for k in -1..=2 {
+                    let ox = 216.0 + SPEED * ((n + k as f32 + 0.5) * HOP - g);
+                    c.fill(&rrect(ox - 3.5, 162.0, 7.0, 8.0, 1.5), RED.fade(0.9));
+                }
+                let jump = ((g / HOP).fract() * PI).sin();
+                let py = 160.0 - 17.0 * jump;
+                c.fill(&rrect(211.0, py, 10.0, 10.0, 2.5), GREEN);
+                c.fill(&circle(218.5, py + 3.5, 1.3), SCREEN_ON);
+                for i in 0..3 {
+                    c.fill(&circle(206.0 + i as f32 * 6.0, 128.0, 2.0), PINK_DARK);
+                }
+                // the pass count ticks up in the corner
+                let passes = ((t / HOP) as i64 % 9) as usize;
+                for i in 0..passes {
+                    c.fill(&rrect(268.0 - i as f32 * 4.0, 126.0, 2.5, 5.0, 1.0), SAND);
+                }
+                if p.notes.is_some() {
+                    c.fill(&rrect(199.0, 121.0, 78.0, 60.0, 0.0), INK.fade(0.35));
+                    c.fill(&rrect(231.0, 140.0, 5.0, 16.0, 1.5), WHITE);
+                    c.fill(&rrect(240.0, 140.0, 5.0, 16.0, 1.5), WHITE);
+                }
+            }
+            Mood::Building => {
+                // a brick wall goes up course by course; the next brick drops into place
+                c.stroke(&line(203.0, 176.5, 273.0, 176.5), CASE.fade(0.5), 1.4);
+                let step = t * 3.5;
+                let placed = (step as usize) % 31;
+                let fall = 1.0 - step.fract();
+                for i in 0..placed.min(25) + 1 {
+                    if i >= 25 {
+                        break;
+                    }
+                    let (row, col) = (i / 5, i % 5);
+                    let x = 206.0 + col as f32 * 13.0 + if row % 2 == 1 { 6.5 } else { 0.0 };
+                    let mut y = 169.0 - row as f32 * 7.5;
+                    if i == placed {
+                        y -= fall * 34.0;
+                    }
+                    let w = if row % 2 == 1 && col == 4 { 6.0 } else { 12.0 };
+                    c.fill(&rrect(x, y, w, 6.5, 1.0), Rgba::rgb(206, 96, 66));
+                    c.fill(&rrect(x, y, w, 1.6, 0.8), Rgba::rgb(232, 138, 104));
+                }
+            }
+            Mood::Researching => {
+                // a page scrolls up slowly; the line passing the reading spot gets highlighted as it is read, and
+                // stays highlighted
+                c.fill(&rrect(211.0, 121.0, 54.0, 60.0, 0.0), Rgba::rgb(236, 232, 220));
+                let (lh, read_y) = (7.0, 150.0);
+                let off = t * 3.5;
+                let first = (off / lh).floor() as i64;
+                for i in -1..10i64 {
+                    let n = first + i;
+                    let y = 124.0 + i as f32 * lh - (off - first as f32 * lh);
+                    if !(123.0..178.0).contains(&y) {
+                        continue;
+                    }
+                    let len = 24.0 + (hash(n + 3) % 18) as f32;
+                    let marked = hash(n * 5 + 1) % 3 == 0;
+                    if marked && y <= read_y {
+                        let k = ((read_y - y) / 5.0).clamp(0.0, 1.0);
+                        c.fill(&rrect(215.0, y - 2.4, (len + 4.0) * k, 5.0, 2.0), SAND.fade(0.8));
+                    }
+                    c.fill(&rrect(217.0, y - 1.0, len, 2.2, 1.1), Rgba::rgb(120, 116, 130));
+                }
+            }
+            Mood::Transfer(up) => {
+                // files fly between a cloud and a tray; a progress bar fills underneath
+                for (x, y, r) in [(229.0, 137.0, 6.5), (238.0, 132.0, 8.5), (248.0, 137.0, 6.5)] {
+                    c.fill(&circle(x, y, r), WHITE.fade(0.92));
+                }
+                c.fill(&rrect(223.0, 135.0, 31.0, 9.0, 4.5), WHITE.fade(0.92));
+                c.fill(&rrect(222.0, 165.0, 33.0, 5.0, 2.0), CASE);
+                for i in 0..2 {
+                    let ph = (t * 0.75 + i as f32 / 2.0).fract();
+                    let y = if up { 160.0 - 16.0 * ph } else { 146.0 + 16.0 * ph };
+                    let a = (ph * PI).sin();
+                    c.fill(&rrect(234.5, y - 5.0, 8.0, 10.0, 1.6), CODE[i].fade(a));
+                    c.fill(&rrect(236.5, y - 2.0, 4.0, 1.2, 0.6), SCREEN_ON.fade(a));
+                }
+                let (ax, ay) = (263.0, 155.0);
+                let d = if up { -1.0 } else { 1.0 };
+                c.stroke(&polyline(&[(ax - 4.0, ay - 2.0 * d), (ax, ay + 2.0 * d), (ax + 4.0, ay - 2.0 * d)]), GREEN, 2.0);
+                c.fill(&rrect(207.0, 174.0, 62.0, 4.0, 2.0), WHITE.fade(0.12));
+                c.fill(&rrect(207.0, 174.0, 4.0 + 58.0 * (t * 0.12).fract(), 4.0, 2.0), GREEN);
+            }
+            Mood::Thinking => {
+                // a checklist: an item is ticked with every box the board gets
+                let done = p.plan.map_or(0, |(k, _)| (k * 5.0).floor() as usize).min(4);
+                let _ = t;
+                for i in 0..4 {
+                    let y = 133.0 + i as f32 * 11.0;
+                    c.stroke(&rrect(207.0, y - 4.0, 8.0, 8.0, 1.5), CASE.fade(0.8), 1.4);
+                    let len = 30.0 + (hash(i as i64 + 11) % 16) as f32;
+                    c.fill(&rrect(220.0, y - 1.5, len, 3.0, 1.5), WHITE.fade(if i < done { 0.3 } else { 0.55 }));
+                    if i < done {
+                        c.stroke(&polyline(&[(208.5, y), (211.0, y + 2.5), (215.5, y - 3.5)]), GREEN, 2.0);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// The notepad beside the keyboard while testing: last round's notes, or the lines being written now.
+    fn notepad(&self, c: &mut Canvas, _t: f32, p: &Pose) {
+        let (x, y) = PAD;
+        c.blob(&rrect(x, y, 26.0, 17.0, 2.0), Rgba::rgb(252, 248, 234));
+        c.stroke(&line(x + 4.0, y + 1.5, x + 4.0, y + 15.5), RED.fade(0.45), 0.9);
+        let written = p.notes.map_or(3.0, |n| n * 3.0);
+        for row in 0..3 {
+            let k = (written - row as f32).clamp(0.0, 1.0);
+            let k = (k * 1.15).min(1.0);
+            if k <= 0.0 {
+                continue;
+            }
+            let ly = y + 4.0 + row as f32 * 4.0;
+            let len = 17.0 * k;
+            let pts: Vec<(f32, f32)> = (0..=8).map(|i| {
+                let u = i as f32 / 8.0;
+                (x + 6.0 + len * u, ly + 0.7 * (u * 9.0 + row as f32).sin())
+            }).collect();
+            c.stroke(&polyline(&pts), Rgba::rgb(70, 82, 140), 1.0);
+        }
+    }
+
+    /// A gamepad held up at the chest with its face tipped toward the kitten (the keyboard is put away while
+    /// testing): from our side we see its underside and front edge, the triggers and shoulder buttons along the
+    /// top, and the grips coming down into the paws. The trigger being pressed sinks in and lights up.
+    fn controller(&self, c: &mut Canvas, t: f32, p: &Pose) {
+        let (shell, under, light) = (Rgba::rgb(96, 104, 140), Rgba::rgb(78, 84, 116), Rgba::rgb(150, 158, 196));
+        let at = |x: f32, y: f32| pad_point(t, x, y);
+        let seg = |x1: f32, y1: f32, x2: f32, y2: f32| {
+            let (a, b) = (at(x1, y1), at(x2, y2));
+            line(a.0, a.1, b.0, b.1)
+        };
+        let hot = if p.notes.is_some() { usize::MAX } else { (hash((t * 4.0) as i64) % 3) as usize };
+        for (i, s) in [-1.0f32, 1.0].into_iter().enumerate() {
+            let sink = if hot == i { 1.6 } else { 0.0 };
+            let (x, y) = at(s * 21.0, -12.0 + sink);
+            c.blob(&rrect(x - 8.0, y - 3.5, 16.0, 8.0, 3.5), if hot == i { light } else { shell });
+        }
+        for s in [-1.0f32, 1.0] {
+            // narrower than the paw that closes over its end, so nothing of it shows around the paw
+            let grip = seg(s * 19.0, 2.0, s * GRIP.0, GRIP.1);
+            c.stroke(&grip, INK, 15.0);
+            c.stroke(&grip, under, 11.6);
+        }
+        let body = seg(-27.0, 0.0, 27.0, 0.0);
+        c.stroke(&body, INK, 22.0);
+        c.stroke(&body, under, 18.4);
+        // the front edge: a bumper either side of the cable port, the shell's seam below
+        for s in [-1.0f32, 1.0] {
+            c.stroke(&seg(s * 12.0, -6.5, s * 30.0, -6.5), shell, 4.6);
+            c.stroke(&seg(s * 13.0, -7.4, s * 29.0, -7.4), light.fade(0.8), 1.2);
+        }
+        let (px, py) = at(0.0, -6.5);
+        c.fill(&rrect(px - 3.5, py - 1.6, 7.0, 3.2, 1.2), INK.fade(0.8));
+        c.stroke(&seg(-24.0, 1.5, 24.0, 1.5), light.fade(0.35), 1.0);
+    }
+
+    /// A yellow hard hat while building.
+    fn hard_hat(&self, c: &mut Canvas, p: &Pose) {
+        let hy = p.hy;
+        let (hat, shade) = (Rgba::rgb(255, 204, 64), Rgba::rgb(222, 164, 40));
+        c.blob(&oval(CX - 32.0, hy - 60.0, 64.0, 44.0), hat);
+        c.stroke(&line(CX, hy - 59.0, CX, hy - 36.0), shade, 4.0);
+        c.blob(&rrect(CX - 44.0, hy - 37.0, 88.0, 7.0, 3.5), hat);
+        c.stroke(&line(CX - 40.0, hy - 32.0, CX + 40.0, hy - 32.0), shade.fade(0.7), 1.2);
+    }
+
+    /// Round reading glasses over the eyes while researching.
+    fn glasses(&self, c: &mut Canvas, p: &Pose) {
+        let ey = p.hy - 3.0;
+        let frame = Rgba::rgb(70, 52, 40);
+        for ex in [CX - 22.0, CX + 22.0] {
+            c.fill(&circle(ex, ey, 11.5), WHITE.fade(0.14));
+            c.stroke(&circle(ex, ey, 11.5), frame, 2.4);
+            c.stroke(&quad(ex - 6.5, ey - 5.0, ex - 5.0, ey - 8.0, ex - 1.0, ey - 8.5), WHITE.fade(0.7), 1.3);
+        }
+        c.stroke(&quad(CX - 10.5, ey - 2.0, CX, ey - 6.0, CX + 10.5, ey - 2.0), frame, 2.2);
+        for s in [-1.0f32, 1.0] {
+            c.stroke(&line(CX + s * 33.5, ey - 3.0, CX + s * 46.0, ey - 7.0), frame, 2.2);
+        }
+    }
+
+    /// The whiteboard on its easel beside the desk, with the marker strokes drawn k (0..1) of the way.
+    fn whiteboard(&self, c: &mut Canvas, k: f32, seed: u32, t: f32) {
+        let (x, y, w, h) = BOARD;
+        // an easel on the floor behind the desk: its legs run down behind the desk (drawn later, over them)
+        for (top, foot) in [(x + 12.0, x + 8.0), (x + w - 12.0, x + w - 8.0)] {
+            c.stroke(&line(top, y + h - 2.0, foot, H), INK, 4.6);
+            c.stroke(&line(top, y + h - 2.0, foot, H), WOOD_FRONT, 2.6);
+        }
+        c.blob(&rrect(x, y, w, h, 3.0), Rgba::rgb(250, 250, 246));
+        c.stroke(&rrect(x + 1.5, y + 1.5, w - 3.0, h - 3.0, 2.0), CASE_SHADE, 1.6);
+        c.blob(&rrect(x + 3.0, y + h - 1.0, w - 6.0, 4.0, 1.5), CASE_SHADE);
+        for s in plan_strokes(k, seed).0 {
+            if s.len() > 1 {
+                c.stroke(&polyline(&s), Rgba::rgb(60, 110, 200), 2.0);
+            }
+        }
+        if k >= 1.0 && (self.egg || plan_egg(seed)) {
+            self.board_egg(c, seed, t);
+        }
+    }
+
+    /// The finished drawing's little extra: a small animated scene in the drawing's own style.
+    fn board_egg(&self, c: &mut Canvas, seed: u32, t: f32) {
+        let (ax, ay, ..) = BOARD_ART;
+        let red = Rgba::rgb(214, 70, 70);
+        let blue = Rgba::rgb(60, 110, 200);
+        let (drawing, anchors) = plan_drawing(seed);
+        match hash(seed as i64) % 9 {
+            0 => {
+                // underpants gnomes: step 2 is "?", the last step is the money
+                if let [.., (x1, y1), (x2, y2)] = anchors[..] {
+                    if let Some(font) = self.bold.as_ref() {
+                        for i in 0..3 {
+                            let bob = 1.5 * (t * 4.0 + i as f32 * 1.4).sin();
+                            c.text(font, 7.0, ax + x1 - 7.0 + i as f32 * 5.0, ay + y1 + 2.6 + bob, "?", red);
+                        }
+                    }
+                    let (bx, by) = (ax + x2, ay + y2 + 1.0);
+                    c.blob(&oval(bx - 6.0, by - 4.5, 12.0, 10.0), SAND);
+                    c.blob(&poly(&[(bx - 2.5, by - 4.0), (bx - 4.0, by - 8.0), (bx + 4.0, by - 8.0), (bx + 2.5, by - 4.0)]), SAND);
+                    c.stroke(&line(bx - 3.0, by - 4.5, bx + 3.0, by - 4.5), WOOD_FRONT, 1.2);
+                    if let Some(font) = self.bold.as_ref() {
+                        c.text(font, 6.5, bx - 1.8, by + 3.0, "$", WOOD_FRONT);
+                    }
+                    for (i, (dx, dy)) in [(-9.0f32, -6.0f32), (8.0, -8.0), (9.0, 3.0)].into_iter().enumerate() {
+                        let s = 1.5 + 1.5 * (t * 5.0 + i as f32 * 2.1).sin().max(0.0);
+                        c.stroke(&line(bx + dx - s, by + dy, bx + dx + s, by + dy), SPARK, 1.0);
+                        c.stroke(&line(bx + dx, by + dy - s, bx + dx, by + dy + s), SPARK, 1.0);
+                    }
+                }
+            }
+            1 => {
+                // a space invader patrols over the bars and drops a bomb now and then
+                let x = ax + 25.0 + 13.0 * (t * 1.2).sin();
+                let y = ay + 4.0;
+                let frame = if (t * 2.5) as i64 % 2 == 0 { &INVADER_A } else { &INVADER_B };
+                pixels(c, frame, x - 5.5, y, 1.0, Rgba::rgb(70, 170, 90));
+                let drop = (t * 0.8).fract();
+                if drop < 0.7 {
+                    let bx = ax + 25.0 + 13.0 * ((t - drop * 1.25) * 1.2).sin();
+                    c.fill(&rrect(bx - 0.6, y + 9.0 + drop * 70.0, 1.2, 3.0, 0.4), red);
+                }
+            }
+            2 => {
+                // a Nokia snake slithers along the graph to an apple at its end
+                if let Some(pts) = drawing.get(1) {
+                    let pts: Vec<(f32, f32)> = pts.iter().map(|&(x, y)| (ax + x, ay + y)).collect();
+                    let end = pts[pts.len() - 1];
+                    c.fill(&circle(end.0 + 2.0, end.1 - 4.0, 2.4), red);
+                    c.stroke(&line(end.0 + 2.0, end.1 - 6.2, end.0 + 3.4, end.1 - 7.6), Rgba::rgb(80, 160, 80), 1.0);
+                    let head = (t * 0.22).fract();
+                    for k in 0..7 {
+                        let u = (head - k as f32 * 0.035).max(0.0);
+                        let (x, y) = along(&pts, u);
+                        let s = if k == 0 { 3.0 } else { 2.4 };
+                        c.fill(&rrect(x - s / 2.0, y - s / 2.0, s, s, 0.6), Rgba::rgb(80, 150, 70));
+                        if k == 0 {
+                            c.fill(&circle(x + 0.5, y - 0.5, 0.5), INK);
+                        }
+                    }
+                }
+            }
+            3 => {
+                // a tiny Tetris well in the corner: a piece drops in and the row flashes as it clears
+                let (wx, wy, cell) = (ax + 37.0, ay + 50.0, 3.4);
+                c.stroke(&polyline(&[(wx, wy), (wx, wy + 5.0 * cell), (wx + 3.0 * cell, wy + 5.0 * cell), (wx + 3.0 * cell, wy)]), blue, 1.0);
+                let ph = (t / 2.2).fract();
+                let flash = ph > 0.78;
+                let row_col = if flash && (t * 12.0) as i64 % 2 == 0 { WHITE } else { CODE[2] };
+                for col in [0usize, 2] {
+                    c.fill(&rrect(wx + col as f32 * cell + 0.3, wy + 4.0 * cell + 0.3, cell - 0.6, cell - 0.6, 0.6), row_col);
+                }
+                let drop = ((ph / 0.78).min(1.0) * 4.0).floor();
+                for (dx, dy) in [(1.0f32, 0.0f32), (1.0, -1.0), (0.0, -1.0), (2.0, -1.0)] {
+                    let y = wy + (drop + dy) * cell;
+                    if y >= wy - 0.1 {
+                        c.fill(&rrect(wx + dx * cell + 0.3, y + 0.3, cell - 0.6, cell - 0.6, 0.6), if flash && dy == 0.0 { row_col } else { CODE[3] });
+                    }
+                }
+            }
+            4 => {
+                // a pixel kitten hops along the milestones, a coin popping at each, then slides down the flag pole
+                if let Some(road) = drawing.first() {
+                    let road: Vec<(f32, f32)> = road.iter().map(|&(x, y)| (ax + x, ay + y)).collect();
+                    let ph = (t / 4.5).fract() * 4.0;
+                    let leg = (ph.floor() as usize).min(3);
+                    let u = ph.fract();
+                    let (x, y) = if leg < 3 {
+                        let (a, b) = (road[leg], road[leg + 1]);
+                        (a.0 + (b.0 - a.0) * u, a.1 + (b.1 - a.1) * u - 9.0 * (u * PI).sin())
+                    } else {
+                        let top = road[3];
+                        (top.0 - 2.0, top.1 - 14.0 + 14.0 * u)
+                    };
+                    pixels(c, &PIXEL_CAT, x - 3.0, y - 6.0, 1.2, Rgba::rgb(240, 150, 60));
+                    if leg < 3 && u < 0.5 {
+                        let (cx, cy) = road[leg];
+                        let w = 2.6 * (u * 30.0).cos().abs() + 0.4;
+                        c.fill(&oval(cx - w / 2.0, cy - 8.0 - u * 10.0, w, 3.6), SAND.fade(1.0 - u * 2.0));
+                    }
+                }
+            }
+            5 => {
+                // the pie chart turns into a chomper, a little ghost close behind
+                let (cx, cy, r) = (ax + 25.0, ay + 36.0, 18.0);
+                let mouth = 0.05 + 0.22 * (t * 6.0).sin().abs();
+                let mut pts = vec![(cx, cy)];
+                pts.extend((0..=36).map(|i| {
+                    let a = mouth * PI + (2.0 - 2.0 * mouth) * PI * i as f32 / 36.0;
+                    (cx + r * a.cos(), cy + r * a.sin())
+                }));
+                c.fill(&poly(&pts), SAND.fade(0.85));
+                c.fill(&circle(cx + 3.0, cy - 9.0, 1.8), INK);
+                let gx = ax + 8.0 + 3.0 * (t * 2.0).sin();
+                let gy = ay + 62.0;
+                let ghost = Rgba::rgb(240, 130, 190);
+                let mut g = vec![(gx - 4.5, gy + 5.0)];
+                g.extend((0..=12).map(|i| {
+                    let a = PI + PI * i as f32 / 12.0;
+                    (gx + 4.5 * a.cos(), gy + 4.5 * a.sin())
+                }));
+                g.extend([(gx + 4.5, gy + 5.0), (gx + 3.0, gy + 3.5), (gx + 1.5, gy + 5.0), (gx, gy + 3.5), (gx - 1.5, gy + 5.0), (gx - 3.0, gy + 3.5)]);
+                c.fill(&poly(&g), ghost);
+                for ex in [gx - 1.8, gx + 1.8] {
+                    c.fill(&circle(ex, gy - 0.5, 1.2), WHITE);
+                    c.fill(&circle(ex + 0.4, gy - 0.3, 0.5), INK);
+                }
+            }
+            6 => {
+                // a three-eyed alien peeks out of the porthole; the flame flickers
+                let (px, py) = (ax + 25.0, ay + 25.0);
+                c.fill(&circle(px, py, 3.6), Rgba::rgb(40, 50, 80));
+                c.fill(&circle(px, py + 0.8, 2.8), Rgba::rgb(110, 200, 110));
+                let blink = (t * 0.7).fract() > 0.92;
+                for ex in [px - 1.4, px, px + 1.4] {
+                    if blink {
+                        c.stroke(&line(ex - 0.5, py, ex + 0.5, py), INK, 0.5);
+                    } else {
+                        c.fill(&circle(ex, py, 0.55), INK);
+                    }
+                }
+                let f = 0.8 + 0.3 * (t * 17.0).sin();
+                c.fill(&poly(&[(ax + 20.0, ay + 50.0), (ax + 25.0, ay + 50.0 + 13.0 * f), (ax + 30.0, ay + 50.0)]), Rgba::rgb(255, 150, 60).fade(0.85));
+                c.fill(&poly(&[(ax + 22.5, ay + 50.0), (ax + 25.0, ay + 50.0 + 7.0 * f), (ax + 27.5, ay + 50.0)]), SAND);
+            }
+            7 => {
+                // a little invader dancing in the overlap
+                let three = drawing.iter().filter(|s| s.len() > 20).count() > 2;
+                let frame = if (t * 3.0) as i64 % 2 == 0 { &INVADER_A } else { &INVADER_B };
+                pixels(c, frame, ax + 25.0 - 6.6, ay + if three { 34.0 } else { 26.0 }, 1.2, Rgba::rgb(70, 170, 90));
+            }
+            _ => {
+                // "Lumos": a wand taps the bulb and it lights up
+                let (cx, cy) = (ax + 25.0, ay + 28.0);
+                let tap = (t * 1.3).fract();
+                let lit = tap > 0.25;
+                if lit {
+                    let glow = 0.35 + 0.15 * (t * 6.0).sin();
+                    c.fill(&circle(cx, cy, 13.0), SAND.fade(glow));
+                    for i in 0..4 {
+                        let a = t * 2.0 + i as f32 * PI / 2.0;
+                        let (sx, sy) = (cx + a.cos() * 17.0, cy + a.sin() * 17.0);
+                        c.stroke(&line(sx - 1.6, sy, sx + 1.6, sy), SPARK, 1.0);
+                        c.stroke(&line(sx, sy - 1.6, sx, sy + 1.6), SPARK, 1.0);
+                    }
+                }
+                let reach = if tap < 0.25 { tap / 0.25 } else { 1.0 };
+                let (tx, ty) = (cx + 15.0 - 4.0 * reach, cy + 10.0 - 3.0 * reach);
+                c.stroke(&line(tx, ty, tx + 9.0, ty + 10.0), WOOD_FRONT, 2.0);
+                c.fill(&circle(tx, ty, 1.1), WHITE);
+            }
+        }
+    }
+
+    /// A typing screen's rare little extra, drawn over it.
+    fn screen_egg(&self, c: &mut Canvas, t: f32) {
+        match self.screen {
+            0 => {
+                // digital rain
+                c.fill(&rrect(199.0, 121.0, 78.0, 60.0, 0.0), Rgba::rgb(8, 20, 12).fade(0.9));
+                for col in 0..11 {
+                    let x = 202.0 + col as f32 * 7.0;
+                    let speed = 18.0 + (hash(col + 5) % 20) as f32;
+                    let head = 118.0 + ((t * speed + (hash(col) % 60) as f32) % 80.0);
+                    for k in 0..6 {
+                        let y = head - k as f32 * 4.5;
+                        let a = if k == 0 { 1.0 } else { 0.75 - k as f32 * 0.12 };
+                        let col_rgb = if k == 0 { Rgba::rgb(200, 255, 210) } else { GREEN };
+                        c.fill(&rrect(x, y, 2.4, 3.2, 0.6), col_rgb.fade(a));
+                    }
+                }
+            }
+            1 => {
+                // a spinning plumbob floats above the bars
+                let (x, y) = (262.0, 129.0 + 1.5 * (t * 2.0).sin());
+                let w = 5.0 * (t * 2.2).cos();
+                let green = Rgba::rgb(110, 230, 110);
+                c.fill(&poly(&[(x, y - 7.0), (x + w, y), (x, y + 2.0), (x - w, y)]), green);
+                c.fill(&poly(&[(x, y + 2.0), (x + w, y), (x, y + 9.0), (x - w, y)]), Rgba::rgb(70, 180, 80));
+                c.stroke(&line(x, y - 7.0, x + w * 0.5, y - 1.0), WHITE.fade(0.6), 0.8);
+            }
+            2 => {
+                // a pop-tart cat streaks across with its rainbow
+                let x = 190.0 + (t * 26.0) % 110.0;
+                let y = 133.0 + 2.0 * (t * 6.0).sin();
+                let rainbow = [Rgba::rgb(240, 80, 80), Rgba::rgb(250, 160, 60), SAND, GREEN, CODE[1], Rgba::rgb(170, 110, 230)];
+                for (i, col) in rainbow.iter().enumerate() {
+                    let mut sx = x - 3.0;
+                    let mut step = 0;
+                    while sx > 195.0 {
+                        let wob = if step % 2 == 0 { 0.0 } else { 1.0 };
+                        c.fill(&rrect(sx - 6.0, y - 4.0 + i as f32 * 1.6 + wob, 6.0, 1.6, 0.0), *col);
+                        sx -= 6.0;
+                        step += 1;
+                    }
+                }
+                c.fill(&rrect(x - 3.0, y - 5.0, 12.0, 10.0, 2.0), Rgba::rgb(240, 200, 150));
+                c.fill(&rrect(x - 1.5, y - 3.5, 9.0, 7.0, 1.5), Rgba::rgb(250, 150, 200));
+                for (dx, dy) in [(0.5f32, -1.5f32), (3.5, 1.0), (6.0, -2.0)] {
+                    c.fill(&rrect(x + dx, y + dy, 1.0, 1.0, 0.0), Rgba::rgb(230, 60, 120));
+                }
+                c.fill(&rrect(x + 6.0, y - 2.0, 7.0, 6.0, 2.0), Rgba::rgb(150, 150, 160));
+                c.fill(&poly(&[(x + 6.5, y - 1.5), (x + 7.5, y - 4.0), (x + 9.0, y - 1.5)]), Rgba::rgb(150, 150, 160));
+                c.fill(&poly(&[(x + 10.0, y - 1.5), (x + 11.5, y - 4.0), (x + 12.5, y - 1.5)]), Rgba::rgb(150, 150, 160));
+                c.fill(&circle(x + 8.2, y + 0.5, 0.6), INK);
+                c.fill(&circle(x + 11.2, y + 0.5, 0.6), INK);
+            }
+            3 => {
+                // two portals and a companion cube passing through
+                c.fill(&rrect(199.0, 121.0, 78.0, 60.0, 0.0), SCREEN_ON.fade(0.85));
+                let (bx, ox, y) = (212.0, 264.0, 151.0);
+                let ph = (t * 0.6).fract();
+                let cx = bx + (ox - bx) * ph;
+                let s = 9.0;
+                c.fill(&rrect(cx - s / 2.0, y - s / 2.0, s, s, 1.8), Rgba::rgb(190, 194, 210));
+                c.stroke(&rrect(cx - s / 2.0, y - s / 2.0, s, s, 1.8), Rgba::rgb(120, 124, 140), 1.0);
+                c.fill(&circle(cx - 1.0, y - 0.6, 1.3), Rgba::rgb(240, 110, 160));
+                c.fill(&circle(cx + 1.0, y - 0.6, 1.3), Rgba::rgb(240, 110, 160));
+                c.fill(&poly(&[(cx - 2.2, y - 0.2), (cx, y + 2.3), (cx + 2.2, y - 0.2)]), Rgba::rgb(240, 110, 160));
+                for (x, col) in [(bx, Rgba::rgb(80, 160, 255)), (ox, Rgba::rgb(255, 150, 50))] {
+                    c.stroke(&oval(x - 4.0, y - 11.0, 8.0, 22.0), col, 2.4);
+                    c.fill(&oval(x - 2.8, y - 9.5, 5.6, 19.0), col.fade(0.25));
+                }
+            }
+            _ => {
+                // a rocket rides the graph line up to the moon
+                c.fill(&circle(268.0, 129.0, 5.0), Rgba::rgb(255, 230, 150));
+                c.fill(&circle(270.5, 127.0, 4.6), SCREEN_ON);
+                let ph = (t * 0.25).fract();
+                let x = 203.0 + 66.0 * ph;
+                let yat = |x: f32| {
+                    let u = (x - 203.0) / 3.5 * 0.45 + t * 1.8;
+                    152.0 - 9.0 * u.sin() - 5.0 * (u * 2.3 + 1.0).sin() - 20.0 * ph * ph
+                };
+                let (y, ahead) = (yat(x), yat(x + 2.0));
+                let ang = (ahead - y).atan2(2.0);
+                let (ca, sa) = (ang.cos(), ang.sin());
+                let at = |px: f32, py: f32| (x + px * ca - py * sa, y + px * sa + py * ca);
+                let body: Vec<(f32, f32)> = [(6.0, 0.0), (2.0, -2.4), (-4.0, -2.4), (-4.0, 2.4), (2.0, 2.4)].iter().map(|&(px, py)| at(px, py)).collect();
+                let flame: Vec<(f32, f32)> = [(-4.0, -1.6), (-8.5 - 1.5 * (t * 20.0).sin(), 0.0), (-4.0, 1.6)].iter().map(|&(px, py)| at(px, py)).collect();
+                c.fill(&poly(&flame), Rgba::rgb(255, 150, 60));
+                c.fill(&poly(&body), WHITE);
+                let (wx, wy) = at(1.0, 0.0);
+                c.fill(&circle(wx, wy, 1.1), CODE[1]);
+            }
+        }
+    }
+
     /// Twinkling stars around the head during the "all done!" moment.
     fn confetti(&self, c: &mut Canvas, t: f32, k: f32, p: &Pose) {
         let fade = if k > 0.8 { (1.0 - k) / 0.2 } else { 1.0 };
@@ -694,9 +1607,10 @@ impl Scene {
         }
         let breathe = |speed: f32| 0.45 + 0.55 * (0.5 + 0.5 * (t * speed).sin());
         let led = match mood {
-            Some(Mood::Busy) => GREEN.fade(if (t * 3.0).fract() < 0.6 { 1.0 } else { 0.45 }),
-            Some(Mood::Waiting) => Rgba::rgb(255, 186, 84).fade(breathe(4.0)),
+            Some(Mood::Busy | Mood::Building | Mood::Transfer(_)) => GREEN.fade(if (t * 3.0).fract() < 0.6 { 1.0 } else { 0.45 }),
+            Some(Mood::Waiting | Mood::Thinking) => Rgba::rgb(255, 186, 84).fade(breathe(4.0)),
             Some(Mood::Problem) => RED.fade(if (t * 2.0).fract() < 0.5 { 1.0 } else { 0.3 }),
+            Some(Mood::Testing | Mood::Researching) => CODE[1].fade(breathe(3.0)),
             None if p.cheer.is_some() => GREEN,
             None => Rgba::rgb(255, 186, 84).fade(breathe(1.5)),
         };
@@ -749,8 +1663,13 @@ impl Scene {
         } else if mood.is_none() && p.cheer.is_some() {
             // a big green tick
             c.stroke(&polyline(&[(224.0, 151.0), (234.0, 161.0), (254.0, 139.0)]), GREEN, 5.0);
+        } else if let Some(m @ (Mood::Testing | Mood::Building | Mood::Researching | Mood::Transfer(_) | Mood::Thinking)) = mood {
+            self.mood_screen(c, t, m, p);
         } else if self.busy && self.screen != 0 {
             self.busy_screen(c, t);
+            if self.egg {
+                self.screen_egg(c, t);
+            }
         } else if self.busy {
             // code scrolls up as it is typed
             let lh = 8.0;
@@ -791,6 +1710,9 @@ impl Scene {
                 c.stroke(&line(x - 2.2, *y, x + 2.2, *y), col, 1.2);
                 c.stroke(&line(*x, y - 2.2, *x, y + 2.2), col, 1.2);
             }
+        }
+        if self.busy && self.egg && self.mood == Mood::Busy && self.screen == 0 {
+            self.screen_egg(c, t);
         }
         // glass glare
         c.fill(&poly(&[(203.0, 124.0), (226.0, 124.0), (208.0, 150.0), (203.0, 150.0)]), WHITE.fade(0.10));
@@ -997,7 +1919,7 @@ impl Scene {
     fn arms(&self, c: &mut Canvas, p: &Pose) {
         let rest_y = if self.busy { 181.0 } else { 179.0 };
         // while waiting the left arm props the chin and is drawn after the head
-        let chin = self.busy && self.mood == Mood::Waiting;
+        let chin = self.busy && self.mood.chin();
         for (paw, sx) in [(p.l, -24.0), (p.r, 24.0)] {
             // the sipping arm is drawn after the head too, so it does not slip under the face
             if (chin && sx < 0.0) || (p.sip.is_some() && sx > 0.0) {

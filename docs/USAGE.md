@@ -52,6 +52,7 @@ The running kitten reads its **status file** every 2 seconds and looks only at t
 | any text                                 | types; the bubble shows the text and the time since it began |
 | text starting with `Waiting` or `Wait`   | waits (see moods below); the bubble counts "N min waiting"   |
 | text starting with `Failed`, `Fail`, `Error` or `Problem` | looks worried (see moods below)             |
+| text starting with another mood word (`Testing`, `Building`, `Researching`, `Downloading`, `Thinking`, ...) | acts out that mood (see moods below) |
 | empty, only spaces, `idle` (any case)    | naps; the bubble says "napping... no jobs right now"         |
 | the file does not exist or can't be read | naps                                                         |
 
@@ -65,6 +66,11 @@ character that is not a letter, so `Waiting:`, `waiting...` and `WAITING for CI`
 | Busy | anything else | types away, the mug steams; the screen shows scrolling code, progress bars, an equalizer, a spinning gear or a line graph, picked at random each time the line changes (never the same twice in a row) |
 | Waiting | `Waiting`, `Wait` | chin propped on one paw, the other paw drums the desk, bored half-closed eyes that glance at the hourglass on the screen (the sand runs down, then the glass turns over), "..." above its head, slow tail swish; the power light pulses amber |
 | Problem | `Failed`, `Fail`, `Error`, `Problem` | ears droop, a small frown, a blinking red X on a dark red screen, a red power light |
+| Testing | `Testing`, `Test`, `Tests`, `Playtesting`, `Playtest`, `Checking`, `Check`, `Verifying`, `Verify`, `QA`, `Autotest`, `Regression`, `Smoke` | the game tester: holds a controller (a button lights up with each press) and plays a little platformer, eyes on the screen; for the last 2.2 seconds of every 6.5-second round the game shows a pause sign and the kitten jots three lines on the notepad beside the keyboard with a pencil, looking down; a blue power light |
+| Building | `Building`, `Build`, `Rebuilding`, `Rebuild`, `Compiling`, `Compile`, `Linking`, `Packaging`, `Bundling` | types in a yellow hard hat while a brick wall goes up course by course on the screen |
+| Researching | `Researching`, `Research`, `Reading`, `Read`, `Reviewing`, `Review`, `Analyzing`, `Analyze`, `Searching`, `Search`, `Investigating`, `Investigate`, `Studying`, `Exploring`, `Digging` | holds a magnifying glass up to the screen, where a lens sweeps along the lines of a page and lights up the one it reads; a blue power light |
+| Transferring | down: `Downloading`, `Download`, `Fetching`, `Fetch`, `Pulling`, `Pull`, `Installing`, `Install`, `Syncing`, `Sync`, `Copying`, `Copy`; up: `Uploading`, `Upload`, `Pushing`, `Push`, `Deploying`, `Deploy`, `Publishing`, `Publish`, `Backing`, `Backup` | types while files fly between a cloud and a tray on the screen (down or up, with an arrow) and a progress bar fills |
+| Thinking | `Thinking`, `Think`, `Planning`, `Plan`, `Designing`, `Design`, `Brainstorming`, `Pondering` | chin on a paw like waiting but without the drumming, a thought cloud with a light bulb that flickers on, and a flowchart that sketches itself on the screen |
 | All done | (no word: a busy line turns idle) | for 2.5 seconds: paws up, little hops, sparkles, a green tick and "all done!", then the nap |
 
 The all-done moment follows any busy or waiting line that turns idle, but not a problem line:
@@ -72,7 +78,8 @@ a job that ended badly goes straight to sleep. To use the moods from a script, w
 `Waiting: ...` while you wait on something (a download, a review, another machine) and
 `Failed: ...` when a step fails, and leave the problem line up until someone has seen it.
 
-Now and then (at random, every 15 to 35 seconds) a busy, waiting or problem kitten takes a
+Now and then (at random, every 15 to 35 seconds) a kitten in any mood but testing and
+researching (its paws are full there) takes a
 coffee break of about 2.4 seconds: the paw on the mug's side (the right of the picture) lifts
 the mug straight up and over to its mouth, the kitten sips with its eyes closed, puts the mug
 back and returns to its mood. While typing, the other paw rests on the keys during the sip;
@@ -339,6 +346,11 @@ for that project only), and make sure the assistant can run
   `kitten-assistant.ini` as `position=x,y`) and opens there next time, until you drag it
   again. If that spot is no longer on any display (a monitor was unplugged), it starts in the
   corner instead.
+- **The menu:** right-click the kitten. It opens as a small card at the pointer. **Monitor**,
+  **Color** and **Size** open as pages that slide in, with a round back button at the top.
+  The keyboard works too: arrow keys move, Enter or Space picks, Left or Backspace goes back,
+  Escape goes back or closes. A click anywhere else closes it; a click on the kitten itself
+  does not (right-click again to start over).
 - **Back to the corner:** right-click the kitten and pick **Back to corner**. This also forgets
   the dragged-to spot, so it starts in the corner again. Picking a display under **Monitor**
   (or `--monitor N`) does the same.
@@ -346,7 +358,7 @@ for that project only), and make sure the assistant can run
   (orange, ginger, cream, gray, silver, brown, golden), solids (black, white, Russian blue,
   chocolate, cinnamon, lilac, fawn), a tuxedo, two pointed coats, patched ones (calico,
   tortoiseshell, cow cat, dilute calico) and fun ones (cotton candy, lavender, mint chip, sky, lemon,
-  peach, strawberry, grape, galaxy, ghost, rainbow; most of these have their own markings: hearts, flower dots, chocolate chips, clouds, seeds and a leafy top, stars, rainbow stripes). The current one has a check mark, and the
+  peach, strawberry, grape, galaxy, ghost, rainbow; most of these have their own markings: hearts, flower dots, chocolate chips, clouds, seeds and a leafy top, stars, rainbow stripes). Each one shows as a portrait of the kitten in that coat; the one under the pointer lifts and shows its name, and the current one has an orange ring. The
   choice is saved in `kitten-assistant.ini` (`coat=Gray tabby`, for example). Patched coats (calico, dilute calico, tortoiseshell, cow cat) roll new patches every time you pick a color: where they sit, their size and shape, and which ears are colored. The roll is saved too (`coat_seed=`), so the kitten looks the same after a restart. Pick the same color again for a new roll.
 - **Pick a display:** with more than one monitor, right-click the kitten and open **Monitor**.
   It lists every display with the number Windows uses in Settings > System > Display, the

@@ -12,6 +12,17 @@ taskbar and shows what your background jobs are doing.
   hourglass on its screen a bored look and thinks "...".
 - **Problem:** a line that starts with `Failed`, `Fail`, `Error` or `Problem`. Ears droop,
   the kitten frowns and the screen shows a blinking red X.
+- **Testing:** a line that starts with `Testing`, `Test`, `Checking`, `Verifying`, `QA` and
+  the like. The kitten turns game tester: it plays a little platformer with a controller,
+  then pauses the game now and then to jot notes on a notepad.
+- **Building:** `Building`, `Compiling`, `Linking`... The kitten types in a yellow hard hat
+  while a brick wall goes up on the screen.
+- **Researching:** `Researching`, `Reading`, `Reviewing`, `Analyzing`, `Searching`... It
+  holds a magnifying glass up to a page on the screen.
+- **Transferring:** `Downloading`, `Installing`, `Syncing` (files fly down from a cloud) or
+  `Uploading`, `Pushing`, `Deploying` (files fly up), with a progress bar.
+- **Thinking:** `Thinking`, `Planning`, `Designing`... Chin on a paw, a light bulb flickers
+  in a thought cloud and a flowchart sketches itself on the screen.
 - **All done:** when a job goes back to idle, the kitten cheers with its paws up for a
   moment, with sparkles and a green tick, before it settles down for a nap. A job that
   ended on a problem line goes straight to sleep.
@@ -26,7 +37,15 @@ whatever is behind it.
 
 | Busy | Waiting | Problem |
 |------|---------|---------|
-| ![The kitten typing, with a bubble saying "Building release 1.2, 12 min so far"](docs/busy.png) | ![The kitten with its chin on a paw and an hourglass on the screen, bubble "Waiting: test results, 3 min waiting"](docs/waiting.png) | ![The kitten frowning with drooped ears and a red X on the screen, bubble "Failed: release build"](docs/problem.png) |
+| ![The kitten typing, with a bubble saying "Writing release notes, 12 min so far"](docs/busy.png) | ![The kitten with its chin on a paw and an hourglass on the screen, bubble "Waiting: test results, 3 min waiting"](docs/waiting.png) | ![The kitten frowning with drooped ears and a red X on the screen, bubble "Failed: release build"](docs/problem.png) |
+
+| Testing | Building | Researching |
+|---------|----------|-------------|
+| ![The kitten holding a game controller, a little platformer on the screen and a notepad on the desk, bubble "Testing: regression suite"](docs/testing.png) | ![The kitten typing in a yellow hard hat while a brick wall goes up on the screen, bubble "Building: release 1.2"](docs/building.png) | ![The kitten holding a magnifying glass up to a page on the screen, bubble "Reviewing: pull request 42"](docs/researching.png) |
+
+| Downloading | Thinking |
+|-------------|----------|
+| ![The kitten typing while files drop from a cloud on the screen, bubble "Downloading: Rust toolchain"](docs/downloading.png) | ![The kitten with its chin on a paw, a light bulb in a thought cloud and a flowchart on the screen, bubble "Planning: next release"](docs/thinking.png) |
 
 | All done | Napping |
 |----------|---------|
@@ -106,6 +125,14 @@ next time. Right-click it for:
   windows cover it. Saved in `kitten-assistant.ini` too.
 - **Quit.**
 
+The menu is the kitten's own: a little card with cat ears that pops open. Monitor, Color and
+Size slide in as pages with a back button, and Color shows the kitten in every coat, so you
+can see a coat before you pick it. It works with the keyboard too: the arrow keys move,
+Enter or Space picks, Left or Backspace goes back, and Escape goes back or closes it.
+Clicking anywhere else closes it.
+
+![The Color page of the menu: a grid of kitten portraits, one per coat, with "Russian blue" under the hovered one](docs/menu.png)
+
 Only one kitten runs at a time, and starting a second one does nothing.
 
 ### The status file
@@ -117,6 +144,7 @@ The kitten reads the first line of a text file every 2 seconds:
 | any text                   | types, bubble shows the text     |
 | `Waiting...` or `Wait...`  | waits, bubble shows the text     |
 | `Failed...`, `Fail...`, `Error...` or `Problem...` | looks worried, bubble shows the text |
+| `Testing...`, `Building...`, `Researching...`, `Downloading...`, `Thinking...` and the other mood words | acts it out (see the moods above), bubble shows the text |
 | empty, missing, or `idle`  | naps (after a short cheer if a job just ended) |
 
 The default file is `status.txt` next to the exe. Pick another with `--status FILE`
@@ -173,7 +201,12 @@ and put any options in the shortcut's Target field.
 changes and for screenshots:
 
 ```
-kitten-assistant snapshot busy.png --busy "Building release 1.2" --minutes 12 --bg 6a8caf
+kitten-assistant snapshot busy.png --busy "Writing release notes" --minutes 12 --bg 6a8caf
+kitten-assistant snapshot testing.png --busy "Testing: regression suite" --minutes 4 --bg 6a8caf
+kitten-assistant snapshot building.png --busy "Building: release 1.2" --minutes 12 --bg 6a8caf
+kitten-assistant snapshot researching.png --busy "Reviewing: pull request 42" --bg 6a8caf
+kitten-assistant snapshot downloading.png --busy "Downloading: Rust toolchain" --time 3.4 --bg 6a8caf
+kitten-assistant snapshot thinking.png --busy "Planning: next release" --time 4.4 --bg 6a8caf
 kitten-assistant snapshot waiting.png --busy "Waiting: test results" --minutes 3 --time 4.2 --bg 6a8caf
 kitten-assistant snapshot problem.png --busy "Failed: release build" --bg 6a8caf
 kitten-assistant snapshot done.png --done --time 3.3 --bg 6a8caf

@@ -28,11 +28,19 @@ pub struct Canvas<'a> {
     pub sc: f32,
     ts: Transform,
     clip: Option<Mask>,
+    /// Pixel offset of the design origin (shapes and text alike).
+    ox: f32,
+    oy: f32,
 }
 
 impl<'a> Canvas<'a> {
     pub fn new(pix: &'a mut Pixmap, sc: f32) -> Self {
-        Canvas { pix, sc, ts: Transform::from_scale(sc, sc), clip: None }
+        Canvas { pix, sc, ts: Transform::from_scale(sc, sc), clip: None, ox: 0.0, oy: 0.0 }
+    }
+
+    /// Like `new`, with the design origin at pixel (`ox`, `oy`).
+    pub fn new_at(pix: &'a mut Pixmap, sc: f32, ox: f32, oy: f32) -> Self {
+        Canvas { pix, sc, ts: Transform::from_row(sc, 0.0, 0.0, sc, ox, oy), clip: None, ox, oy }
     }
 
     fn paint(c: Rgba) -> Paint<'static> {
@@ -75,8 +83,8 @@ impl<'a> Canvas<'a> {
     /// Text at design coordinates (x, baseline), size in design pixels.
     pub fn text(&mut self, font: &fontdue::Font, size: f32, x: f32, baseline: f32, s: &str, c: Rgba) {
         let px = size * self.sc;
-        let mut pen = x * self.sc;
-        let base = baseline * self.sc;
+        let mut pen = x * self.sc + self.ox;
+        let base = baseline * self.sc + self.oy;
         let (w, h) = (self.pix.width() as i32, self.pix.height() as i32);
         let data = self.pix.data_mut();
         for ch in s.chars() {

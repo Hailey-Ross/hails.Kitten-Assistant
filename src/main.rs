@@ -7,6 +7,7 @@
 #![windows_subsystem = "windows"]
 
 mod canvas;
+mod menu;
 mod scene;
 mod update;
 
@@ -56,6 +57,9 @@ struct Opts {
     done: bool,
     screen: Option<usize>,
     sip: bool,
+    egg: bool,
+    menu: Option<String>,
+    hover: Option<usize>,
     coat: Option<String>,
     seed: Option<u32>,
 }
@@ -78,6 +82,9 @@ fn parse() -> Result<Opts, String> {
             "--bg" => o.bg = Some(val()?),
             "--done" => o.done = true,
             "--sip" => o.sip = true,
+            "--egg" => o.egg = true,
+            "--menu" => o.menu = Some(val()?),
+            "--hover" => o.hover = Some(val()?.parse().map_err(|_| "bad --hover")?),
             "--coat" => o.coat = Some(val()?),
             "--seed" => o.seed = Some(val()?.parse().map_err(|_| "bad --seed")?),
             "--screen" => o.screen = Some(val()?.parse().map_err(|_| "bad --screen")?),
@@ -180,14 +187,64 @@ fn main() {
     }
 }
 
+/// The right-click menu on page (main, monitor, color, size) with row or tile --hover lit, to a PNG (for checking
+/// its look; not in the usage text).
+fn menu_snapshot(o: &Opts, page: &str, out: &str, sc: f32) -> Result<(), String> {
+    let info = menu::Info {
+        monitors: vec![("Display 1 (primary)".into(), true), ("Display 2".into(), false)],
+        coat: scene::COATS.iter().position(|c| Some(c.name) == o.coat.as_deref()).unwrap_or(0),
+        seed: o.seed.unwrap_or(1),
+        default_size: ("Default (125%)".into(), true),
+        sizes: [50, 75, 100, 125, 150, 175, 200, 250, 300].iter().map(|p| (format!("{p}%"), false)).collect(),
+        topmost: true,
+    };
+    let mut m = menu::Menu::new(info, sc).ok_or("menu")?;
+    let opens = match page {
+        "monitor" => Some(1),
+        "color" => Some(2),
+        "size" => Some(3),
+        _ => None,
+    };
+    if let Some(row) = opens {
+        for _ in 0..=row {
+            m.key(menu::Key::Down, 0.3);
+        }
+        m.key(menu::Key::Enter, 0.3);
+    }
+    let grid = page == "color";
+    for _ in 0..=o.hover.unwrap_or(usize::MAX - 1).min(64) {
+        if o.hover.is_none() {
+            break;
+        }
+        m.key(if grid { menu::Key::Right } else { menu::Key::Down }, 0.6);
+    }
+    let (dw, dh) = menu::window_size();
+    let mut pix = Pixmap::new((dw * sc).ceil() as u32, (dh * sc).ceil() as u32).ok_or("pixmap")?;
+    let end = o.time.unwrap_or(1.6) as f32;
+    let mut t = 0.0;
+    while t < end {
+        m.render(&mut pix, t);
+        t += 1.0 / 60.0;
+    }
+    m.render(&mut pix, end);
+    let mut bg = Pixmap::new(pix.width(), pix.height()).ok_or("pixmap")?;
+    bg.fill(tiny_skia::Color::from_rgba8(106, 140, 175, 255));
+    bg.draw_pixmap(0, 0, pix.as_ref(), &tiny_skia::PixmapPaint::default(), tiny_skia::Transform::identity(), None);
+    bg.save_png(out).map_err(|e| e.to_string())
+}
+
 fn snapshot(o: &Opts) -> Result<(), String> {
     let out = o.arg.clone().unwrap_or_else(|| "kitten.png".into());
     let sc = o.scale.unwrap_or(2.0);
     let t_end = o.time.unwrap_or(3.2);
+    if let Some(page) = o.menu.as_deref() {
+        return menu_snapshot(o, page, &out, sc);
+    }
     let mut s = scene::Scene::new();
     s.set_status(o.busy.as_deref().unwrap_or("idle"), 0.0);
     s.since = -o.minutes.unwrap_or(0.0) * 60.0;
     s.screen = o.screen.unwrap_or(0) % 5;
+    s.egg = o.egg;
     s.coat = scene::Coat::named(o.coat.as_deref().unwrap_or(""));
     s.patch_seed = o.seed.unwrap_or(1);
     // no surprise sips in snapshots; --sip puts one in its drinking moment
@@ -241,13 +298,6 @@ mod win {
     const CLASS: &str = "KittenAssistantWindow";
     const FRAME: usize = 1;
     const POLL: usize = 2;
-    const MENU_CORNER: usize = 1;
-    const MENU_QUIT: usize = 2;
-    const MENU_TOPMOST: usize = 3;
-    const MENU_MONITOR: usize = 100; // + index into monitors()
-    const MENU_COAT: usize = 200; // + index into scene::COATS
-    const MENU_SIZE: usize = 300; // + index into SIZES
-    const MENU_SIZE_AUTO: usize = 4;
     const SIZES: [f32; 9] = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
 
     fn dpi_scale() -> f32 {
@@ -589,76 +639,250 @@ mod win {
         });
     }
 
+    /// The open right-click menu (`menu.rs`): its own see-through window, drawing surface and state.
+    struct MenuWin {
+        hwnd: HWND,
+        owner: HWND,
+        menu: menu::Menu,
+        pix: Pixmap,
+        mem_dc: HDC,
+        dib: HBITMAP,
+        old: HGDIOBJ,
+        bits: *mut u8,
+        start: Instant,
+        sc: f32,
+    }
+
+    impl Drop for MenuWin {
+        fn drop(&mut self) {
+            unsafe {
+                SelectObject(self.mem_dc, self.old);
+                DeleteObject(self.dib as HGDIOBJ);
+                DeleteDC(self.mem_dc);
+            }
+        }
+    }
+
+    thread_local! {
+        static MENU: RefCell<Option<MenuWin>> = const { RefCell::new(None) };
+    }
+
+    const MENU_CLASS: &str = "KittenAssistantMenu";
+    const MENU_TICK: usize = 3;
+    /// WM_MOUSELEAVE (TrackMouseEvent's notice), not in the modules imported here.
+    const MOUSE_LEFT: u32 = 0x02A3;
+    static MENU_CLASS_READY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
     unsafe fn show_menu(hwnd: HWND) {
-        let m = CreatePopupMenu();
-        let sub = CreatePopupMenu();
+        // a second right-click while one is open starts a fresh one
+        close_menu_now();
         let list = monitors();
         let home = HOME.with(|h| h.borrow().clone());
         let current = list.iter().position(|d| d.device == home).or_else(|| list.iter().position(|d| d.primary));
-        for (i, d) in list.iter().enumerate() {
-            let label = wide(&d.label);
-            let check = if Some(i) == current { MF_CHECKED } else { MF_UNCHECKED };
-            AppendMenuW(sub, MF_STRING | check, MENU_MONITOR + i, label.as_ptr());
-        }
-        let coats = CreatePopupMenu();
-        let worn = APP.with(|a| a.try_borrow().ok().and_then(|g| g.as_ref().map(|app| app.scene.coat.name))).unwrap_or(scene::COATS[0].name);
-        for (i, c) in scene::COATS.iter().enumerate() {
-            let label = wide(c.name);
-            let check = if c.name == worn { MF_CHECKED } else { MF_UNCHECKED };
-            // two columns, so the list fits on a laptop screen
-            let column = if i == scene::COATS.len().div_ceil(2) { MF_MENUBARBREAK } else { 0 };
-            AppendMenuW(coats, MF_STRING | check | column, MENU_COAT + i, label.as_ptr());
-        }
-        let sizes = CreatePopupMenu();
-        let (sc, auto) = APP.with(|a| a.try_borrow().ok().and_then(|g| g.as_ref().map(|app| (app.sc, app.auto_size)))).unwrap_or((1.0, true));
-        let auto_label = wide(&format!("Default ({}%, follows display scaling)", (dpi_scale() * 100.0).round()));
-        AppendMenuW(sizes, MF_STRING | if auto { MF_CHECKED } else { MF_UNCHECKED }, MENU_SIZE_AUTO, auto_label.as_ptr());
-        AppendMenuW(sizes, MF_SEPARATOR, 0, null());
-        for (i, s) in SIZES.iter().enumerate() {
-            let label = wide(&format!("{}%", (s * 100.0).round()));
-            let check = if !auto && (s - sc).abs() < 0.005 { MF_CHECKED } else { MF_UNCHECKED };
-            AppendMenuW(sizes, MF_STRING | check, MENU_SIZE + i, label.as_ptr());
-        }
-        let (a, s, col, size, top, b) = (wide("Back to corner"), wide("Monitor"), wide("Color"), wide("Size"), wide("Always on top"), wide("Quit"));
-        let on_top = topmost();
-        AppendMenuW(m, MF_STRING, MENU_CORNER, a.as_ptr());
-        AppendMenuW(m, MF_STRING | MF_POPUP, sub as usize, s.as_ptr());
-        AppendMenuW(m, MF_STRING | MF_POPUP, coats as usize, col.as_ptr());
-        AppendMenuW(m, MF_STRING | MF_POPUP, sizes as usize, size.as_ptr());
-        AppendMenuW(m, MF_STRING | if on_top { MF_CHECKED } else { MF_UNCHECKED }, MENU_TOPMOST, top.as_ptr());
-        AppendMenuW(m, MF_SEPARATOR, 0, null());
-        AppendMenuW(m, MF_STRING, MENU_QUIT, b.as_ptr());
+        let (worn, seed, sc_now, auto) = APP
+            .with(|a| a.try_borrow().ok().and_then(|g| g.as_ref().map(|app| (app.scene.coat.name, app.scene.patch_seed, app.sc, app.auto_size))))
+            .unwrap_or((scene::COATS[0].name, 1, 1.0, true));
+        let info = menu::Info {
+            monitors: list.iter().enumerate().map(|(i, d)| (d.label.clone(), Some(i) == current)).collect(),
+            coat: scene::COATS.iter().position(|c| c.name == worn).unwrap_or(0),
+            seed,
+            default_size: (format!("Default ({}%)", (dpi_scale() * 100.0).round()), auto),
+            sizes: SIZES.iter().map(|s| (format!("{}%", (s * 100.0).round()), !auto && (s - sc_now).abs() < 0.005)).collect(),
+            topmost: topmost(),
+        };
+        let sc = dpi_scale();
+        let Some(m) = menu::Menu::new(info, sc) else { return };
+        let (dw, dh) = menu::window_size();
+        let (w, h) = ((dw * sc).ceil() as i32, (dh * sc).ceil() as i32);
+        // the card's corner at the pointer, kept on the pointer's display
         let mut pt = POINT { x: 0, y: 0 };
         GetCursorPos(&mut pt);
-        SetForegroundWindow(hwnd);
-        let cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, null()) as usize;
-        DestroyMenu(m); // also destroys the submenu
-        match cmd {
-            MENU_CORNER => to_corner(hwnd),
-            MENU_TOPMOST => {
-                save_setting("always_on_top", if on_top { "0" } else { "1" });
-                apply_topmost(hwnd, !on_top);
+        let mut mi: MONITORINFO = std::mem::zeroed();
+        mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        GetMonitorInfoW(MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST), &mut mi);
+        let wa = mi.rcWork;
+        let margin = (menu::MARGIN * sc) as i32;
+        let x = (pt.x - margin).min(wa.right - w).max(wa.left);
+        let y = (pt.y - margin).min(wa.bottom - h).max(wa.top);
+
+        let hinst = GetModuleHandleW(null());
+        let class = wide(MENU_CLASS);
+        if !MENU_CLASS_READY.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            let wc = WNDCLASSW {
+                style: 0,
+                lpfnWndProc: Some(menu_proc),
+                cbClsExtra: 0,
+                cbWndExtra: 0,
+                hInstance: hinst,
+                hIcon: null_mut(),
+                hCursor: LoadCursorW(null_mut(), IDC_HAND),
+                hbrBackground: null_mut(),
+                lpszMenuName: null(),
+                lpszClassName: class.as_ptr(),
+            };
+            RegisterClassW(&wc);
+        }
+        let mh = CreateWindowExW(WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_TOPMOST, class.as_ptr(), null(), WS_POPUP, x, y, w, h, null_mut(), null_mut(), hinst, null());
+        if mh.is_null() {
+            log("could not open the menu window");
+            return;
+        }
+        let screen = GetDC(null_mut());
+        let mem_dc = CreateCompatibleDC(screen);
+        ReleaseDC(null_mut(), screen);
+        let (Some((dib, bits, old)), Some(pix)) = (new_dib(mem_dc, w, h), Pixmap::new(w as u32, h as u32)) else {
+            DeleteDC(mem_dc);
+            DestroyWindow(mh);
+            return;
+        };
+        MENU.with(|s| *s.borrow_mut() = Some(MenuWin { hwnd: mh, owner: hwnd, menu: m, pix, mem_dc, dib, old, bits, start: Instant::now(), sc }));
+        menu_tick();
+        ShowWindow(mh, SW_SHOW);
+        SetForegroundWindow(mh);
+        windows_sys::Win32::UI::Input::KeyboardAndMouse::SetFocus(mh);
+        SetTimer(mh, MENU_TICK, 15, None);
+    }
+
+    /// Close an open menu at once (no animation).
+    unsafe fn close_menu_now() {
+        let open = MENU.with(|s| s.borrow().as_ref().map(|m| m.hwnd));
+        if let Some(h) = open {
+            DestroyWindow(h);
+        }
+    }
+
+    /// One menu frame; the window goes once the close animation ends.
+    unsafe fn menu_tick() {
+        let done = MENU.with(|s| {
+            let mut g = s.borrow_mut();
+            let w = g.as_mut()?;
+            let t = w.start.elapsed().as_secs_f32();
+            w.menu.render(&mut w.pix, t);
+            push_layered(w.hwnd, w.mem_dc, w.bits, &w.pix);
+            w.menu.finished(t).then_some(w.hwnd)
+        });
+        if let Some(h) = done {
+            DestroyWindow(h);
+        }
+    }
+
+    /// The whole pixmap to a per-pixel-alpha layered window (premultiplied RGBA into the DIB's BGRA).
+    unsafe fn push_layered(hwnd: HWND, mem_dc: HDC, bits: *mut u8, pix: &Pixmap) {
+        let src = pix.data();
+        let dst = std::slice::from_raw_parts_mut(bits, src.len());
+        for (d, s) in dst.chunks_exact_mut(4).zip(src.chunks_exact(4)) {
+            d[0] = s[2];
+            d[1] = s[1];
+            d[2] = s[0];
+            d[3] = s[3];
+        }
+        let size = SIZE { cx: pix.width() as i32, cy: pix.height() as i32 };
+        let origin = POINT { x: 0, y: 0 };
+        let blend = BLENDFUNCTION { BlendOp: AC_SRC_OVER as u8, BlendFlags: 0, SourceConstantAlpha: 255, AlphaFormat: AC_SRC_ALPHA as u8 };
+        UpdateLayeredWindow(hwnd, null_mut(), null(), &size, mem_dc, &origin, 0, &blend, ULW_ALPHA);
+    }
+
+    /// Run `f` on the open menu with the time since it opened; its answer comes back after the borrow ends.
+    fn with_menu<R>(f: impl FnOnce(&mut menu::Menu, f32, f32) -> R) -> Option<(R, HWND)> {
+        MENU.with(|s| {
+            let mut g = s.try_borrow_mut().ok()?;
+            let w = g.as_mut()?;
+            let t = w.start.elapsed().as_secs_f32();
+            Some((f(&mut w.menu, t, w.sc), w.owner))
+        })
+    }
+
+    unsafe extern "system" fn menu_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+        use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
+        let pos = || ((lp & 0xFFFF) as i16 as f32, ((lp >> 16) & 0xFFFF) as i16 as f32);
+        match msg {
+            WM_TIMER => {
+                menu_tick();
+                0
             }
-            MENU_QUIT => {
+            WM_MOUSEMOVE => {
+                let (x, y) = pos();
+                with_menu(|m, _, sc| m.mouse_move(x / sc, y / sc));
+                let mut tme = TRACKMOUSEEVENT { cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32, dwFlags: TME_LEAVE, hwndTrack: hwnd, dwHoverTime: 0 };
+                TrackMouseEvent(&mut tme);
+                0
+            }
+            MOUSE_LEFT => {
+                with_menu(|m, _, _| m.mouse_leave());
+                0
+            }
+            WM_LBUTTONUP | WM_RBUTTONUP => {
+                let (x, y) = pos();
+                if let Some((Some(act), owner)) = with_menu(|m, t, sc| m.click(x / sc, y / sc, t)) {
+                    apply_menu(owner, act);
+                }
+                0
+            }
+            WM_KEYDOWN => {
+                let key = match wp as u16 {
+                    VK_UP => Some(menu::Key::Up),
+                    VK_DOWN => Some(menu::Key::Down),
+                    VK_LEFT => Some(menu::Key::Left),
+                    VK_RIGHT => Some(menu::Key::Right),
+                    VK_RETURN | VK_SPACE => Some(menu::Key::Enter),
+                    VK_BACK => Some(menu::Key::Back),
+                    VK_ESCAPE => Some(menu::Key::Escape),
+                    _ => None,
+                };
+                if let Some(key) = key {
+                    if let Some((Some(act), owner)) = with_menu(|m, t, _| m.key(key, t)) {
+                        apply_menu(owner, act);
+                    }
+                }
+                0
+            }
+            // clicked somewhere else: fade away
+            WM_ACTIVATE => {
+                if (wp & 0xFFFF) as u32 == WA_INACTIVE {
+                    with_menu(|m, t, _| m.close(t));
+                }
+                0
+            }
+            WM_DESTROY => {
+                KillTimer(hwnd, MENU_TICK);
+                let gone = MENU.with(|s| s.try_borrow_mut().ok().and_then(|mut g| g.take()));
+                drop(gone);
+                0
+            }
+            _ => DefWindowProcW(hwnd, msg, wp, lp),
+        }
+    }
+
+    /// What a menu pick does.
+    unsafe fn apply_menu(hwnd: HWND, act: menu::Action) {
+        match act {
+            menu::Action::Corner => to_corner(hwnd),
+            menu::Action::Topmost => {
+                let on = topmost();
+                save_setting("always_on_top", if on { "0" } else { "1" });
+                apply_topmost(hwnd, !on);
+            }
+            menu::Action::Quit => {
+                close_menu_now();
                 DestroyWindow(hwnd);
             }
-            MENU_SIZE_AUTO => {
+            menu::Action::SizeAuto => {
                 clear_setting("scale");
                 with_app(|a| {
                     a.auto_size = true;
                     a.resize(dpi_scale());
                 });
             }
-            c if c >= MENU_SIZE && c - MENU_SIZE < SIZES.len() => {
-                let s = SIZES[c - MENU_SIZE];
+            menu::Action::Size(i) => {
+                let Some(&s) = SIZES.get(i) else { return };
                 save_setting("scale", &s.to_string());
                 with_app(|a| {
                     a.auto_size = false;
                     a.resize(s);
                 });
             }
-            c if c >= MENU_COAT && c - MENU_COAT < scene::COATS.len() => {
-                let coat = scene::COATS[c - MENU_COAT];
+            menu::Action::Coat(i) => {
+                let Some(&coat) = scene::COATS.get(i) else { return };
                 // a fresh roll of where the patches sit, kept until the next pick
                 let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.subsec_nanos() ^ d.as_secs() as u32) | 1;
                 save_setting("coat", coat.name);
@@ -669,13 +893,12 @@ mod win {
                     a.frame();
                 });
             }
-            c if c >= MENU_MONITOR && c - MENU_MONITOR < list.len() => {
-                let device = list[c - MENU_MONITOR].device.clone();
+            menu::Action::Monitor(i) => {
+                let Some(device) = monitors().get(i).map(|d| d.device.clone()) else { return };
                 save_setting("monitor", &device);
                 HOME.with(|h| *h.borrow_mut() = device);
                 to_corner(hwnd);
             }
-            _ => {}
         }
     }
 
