@@ -477,8 +477,14 @@ fn along(pts: &[(f32, f32)], u: f32) -> (f32, f32) {
 /// Seconds of a testing round: playing, then jotting notes for the last `NOTES_SECS`.
 const TEST_ROUND: f64 = 6.5;
 const NOTES_SECS: f64 = 2.2;
-/// Where the notepad lies on the desk.
-const PAD: (f32, f32) = (12.0, 192.0);
+/// The notepad lying flat on the desk: its back-left corner, width and depth (foreshortened, as the desk top).
+const PAD: (f32, f32) = (18.0, 207.5);
+const PAD_W: f32 = 32.0;
+const PAD_D: f32 = 8.5;
+/// The y of ruled line `row` on the notepad, where the pencil tip writes.
+fn pad_row(row: f32) -> f32 {
+    PAD.1 + 3.4 + 1.9 * row
+}
 /// The gamepad's center while testing: held up in front of the chest.
 const PAD_Y: f32 = 183.0;
 /// The end of the right grip, in the pad's own frame (the left one mirrors it); the paws hold these.
@@ -846,7 +852,7 @@ impl Scene {
                     // right of and 10 below the paw's corner)
                     let along = ((n * 3.0).fract() * 1.15).min(1.0);
                     let row = (n * 3.0).floor().min(2.0);
-                    Paw { x: PAD.0 - 1.0 + 18.0 * along, lift: 181.0 - (PAD.1 - 6.0 + 4.0 * row), key: None, down: false }
+                    Paw { x: PAD.0 + 4.0 + 18.0 * along, lift: 181.0 - (pad_row(row) - 10.0), key: None, down: false }
                 }
                 None => hold(-1.0, mash(3.7)),
             };
@@ -1339,25 +1345,44 @@ impl Scene {
         }
     }
 
-    /// The notepad beside the keyboard while testing: last round's notes, or the lines being written now.
+    /// The spiral notepad lying flat on the desk while testing (seen from a little above, like the desk top): ruled
+    /// lines, a red margin, the rings along its back edge, and the line being written now.
     fn notepad(&self, c: &mut Canvas, _t: f32, p: &Pose) {
         let (x, y) = PAD;
-        c.blob(&rrect(x, y, 26.0, 17.0, 2.0), Rgba::rgb(252, 248, 234));
-        c.stroke(&line(x + 4.0, y + 1.5, x + 4.0, y + 15.5), RED.fade(0.45), 0.9);
-        let written = p.notes.map_or(3.0, |n| n * 3.0);
+        // the back edge is a little narrower than the front: it lies away from us
+        let edge = |v: f32| (x + 2.0 * (1.0 - v), x + PAD_W - 2.0 * (1.0 - v));
+        let at = |u: f32, v: f32| {
+            let (l, r) = edge(v);
+            (l + (r - l) * u, y + PAD_D * v)
+        };
+        let corners = [at(0.0, 0.0), at(1.0, 0.0), at(1.0, 1.0), at(0.0, 1.0)];
+        // the page block's front edge, then the top sheet
+        let (fl, fr) = (corners[3], corners[2]);
+        c.blob(&poly(&[fl, fr, (fr.0, fr.1 + 1.6), (fl.0, fl.1 + 1.6)]), Rgba::rgb(214, 208, 192));
+        c.blob(&poly(&corners), Rgba::rgb(252, 248, 234));
         for row in 0..3 {
-            let k = (written - row as f32).clamp(0.0, 1.0);
-            let k = (k * 1.15).min(1.0);
-            if k <= 0.0 {
-                continue;
-            }
-            let ly = y + 4.0 + row as f32 * 4.0;
-            let len = 17.0 * k;
+            let v = (pad_row(row as f32) - y) / PAD_D;
+            let (a, b) = (at(0.05, v), at(0.95, v));
+            c.stroke(&line(a.0, a.1, b.0, b.1), Rgba::rgb(150, 182, 220), 0.6);
+        }
+        let (m0, m1) = (at(0.16, 0.12), at(0.16, 0.96));
+        c.stroke(&line(m0.0, m0.1, m1.0, m1.1), RED.fade(0.5), 0.7);
+        // the line being written grows behind the pencil
+        if let Some(n) = p.notes {
+            let row = (n * 3.0).floor().min(2.0);
+            let k = ((n * 3.0 - row) * 1.15).min(1.0);
+            let ly = pad_row(row);
+            let x0 = PAD.0 + 8.0;
             let pts: Vec<(f32, f32)> = (0..=8).map(|i| {
                 let u = i as f32 / 8.0;
-                (x + 6.0 + len * u, ly + 0.7 * (u * 9.0 + row as f32).sin())
+                (x0 + 18.0 * k * u, ly - 0.5 + 0.35 * (u * 11.0 + row).sin())
             }).collect();
-            c.stroke(&polyline(&pts), Rgba::rgb(70, 82, 140), 1.0);
+            c.stroke(&polyline(&pts), Rgba::rgb(70, 82, 140), 0.8);
+        }
+        // the spiral rings along the back edge
+        for i in 0..7 {
+            let (rx, ry) = at(0.12 + i as f32 * 0.127, 0.0);
+            c.stroke(&quad(rx - 1.0, ry + 0.8, rx, ry - 2.6, rx + 1.0, ry + 0.8), INK.fade(0.75), 1.0);
         }
     }
 
