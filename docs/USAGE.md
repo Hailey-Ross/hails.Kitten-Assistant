@@ -18,8 +18,11 @@ This guide covers everything the kitten can do and every way to drive it. The
 
 ## 1. First run in five minutes
 
-1. Download `kitten-assistant.exe` from the Releases page and put it in a folder of its own,
-   for example `C:\Tools\KittenAssistant\`. Nothing else is needed: no installer, no runtime.
+1. Download `kitten-assistant.exe` from the
+   [latest release](https://github.com/Hailey-Ross/hails.Kitten-Assistant/releases/latest) and
+   put it in a folder of its own that you can write to, for example `C:\Tools\KittenAssistant\`
+   (not Program Files: the kitten saves its settings and updates next to the exe). Nothing else
+   is needed: no installer, no runtime.
 2. Double-click it. A kitten appears at the bottom-right of the screen, sitting on the taskbar,
    asleep on its keyboard.
 3. Open a terminal (PowerShell, Command Prompt or Git Bash) in that folder and run:
@@ -81,8 +84,10 @@ Details that matter when you write the file yourself:
 - **Only the first line counts.** Anything after the first line break is ignored, so you can
   keep notes below it.
 - **Spaces at the ends are trimmed.** `  Building  ` shows as `Building`.
-- **A UTF-8 byte order mark is fine.** Files written by Windows PowerShell's `Out-File` or
-  `Set-Content -Encoding utf8` start with one; the kitten skips it.
+- **Write plain text or UTF-8.** A UTF-8 byte order mark is fine (Windows PowerShell's
+  `Set-Content -Encoding utf8` writes one; the kitten skips it). In Windows PowerShell 5.1,
+  `>` and `Out-File` without `-Encoding` write UTF-16, which the kitten cannot read, so it
+  naps. Use `Set-Content`, add `-Encoding utf8`, or use `kitten-assistant say`.
 - **The timer restarts only when the text changes.** Writing the same line again keeps the
   current count. Writing a different line (or going idle and back) starts again at
   "just started". The bubble then counts "1 min so far", "2 min so far", up to
@@ -104,21 +109,35 @@ kitten-assistant quit                 close the running kitten
 kitten-assistant snapshot out.png     render one frame to a PNG, no window
 kitten-assistant update               check for a newer release now and install it
 kitten-assistant version              show the version (in a message box)
-kitten-assistant help                 show the command summary (in a message box)
+kitten-assistant help                 show the command summary (in a message box; also -h, --help)
 ```
 
 - **Forgot `say`?** Text that is not a command is taken as the status line:
   `kitten-assistant "Building"` works like `kitten-assistant say "Building"` and never opens a
-  message box, so a script waiting on the call does not get stuck.
+  message box, so a script waiting on the call does not get stuck. A status that is exactly one
+  command word (`quit`, `update`, `version`, `help`, `snapshot`) runs that command instead, so
+  use `say` for those.
 
-- **Updates install themselves.** A kitten downloaded from the Releases page checks GitHub
-  30 seconds after it starts and then every 6 hours. When a newer stable release is out, it
-  downloads it, checks it against the SHA-256 the release publishes, swaps it in and restarts
-  with the same options (your status, color and position stay). Pre-releases (the rolling
-  `experimental` build) are never installed this way. `update` checks right away. To turn
-  automatic updates off, add the line `auto_update=0` to `kitten-assistant.ini` next to the
-  exe. A kitten you built yourself never updates itself. Update problems are written to
-  `%TEMP%\kitten-assistant.log`.
+- **Never start a status with `--`.** Anything that starts with `--` is read as an option, even
+  inside quotes and even after `say`. `kitten-assistant "--check-assets hang"` or
+  `kitten-assistant say Building --release` (unquoted) is an unknown option: the status is not
+  written, and a message box with the error opens and keeps the call waiting until someone
+  clicks OK, so a script that waits on it hangs. There is no `--` end-of-options marker either.
+  Put a word in front (`kitten-assistant "Check: --check-assets hang"`), quote the whole line,
+  or write the status file directly.
+
+- **Updates install themselves.** A kitten from a numbered release checks GitHub
+  30 seconds after it starts and then every 6 hours. When a newer stable release is out (a
+  higher version, or the same version with a higher build number), it downloads it, checks it
+  against the SHA-256 the release publishes, swaps it in and restarts with the same options
+  (your status, color and position stay). Pre-releases (the rolling `experimental` build) are
+  never installed this way, and the `experimental` build never updates itself. `update` checks
+  right away: with a kitten running, that kitten checks and restarts itself only if there is
+  something newer, with no message; with none running, it updates the exe and says so in a
+  message box. To turn automatic updates off, add the line `auto_update=0` to
+  `kitten-assistant.ini` next to the exe. A kitten you built yourself never updates itself
+  (`update` tells you it is a development build). The exe's folder must be writable for
+  updates and settings. Update problems are written to `%TEMP%\kitten-assistant.log`.
 
 - `say` and `idle` only write the status file and exit at once. They work even if no kitten is
   running; the kitten picks the line up when it starts.
@@ -126,9 +145,10 @@ kitten-assistant help                 show the command summary (in a message box
 - `quit` closes the running kitten wherever it is. It does nothing if none is running.
 - Only one kitten runs at a time. Starting a second one does nothing, so it is safe to put
   `kitten-assistant` at the top of every script.
-- The exe is a windowed app, so it prints nothing to the terminal: `help` and errors (for
-  example a status folder that does not exist) show a message box, and errors are also written
-  to `%TEMP%\kitten-assistant.log`.
+- The exe is a windowed app, so it prints nothing to the terminal: `help`, `version` and errors
+  (for example a status folder that does not exist) show a message box, and the call does not
+  return until it is closed. Errors are also written to `%TEMP%\kitten-assistant.log`, except
+  a mistyped or unknown option (see above), which only shows the message box.
 - **In PowerShell, add `| Out-Null`** to `say` and `idle` (for example
   `kitten-assistant say "Backup" | Out-Null`). PowerShell does not wait for windowed apps, so
   without it the next line of your script can run before the file is written. Command Prompt
@@ -149,8 +169,11 @@ kitten-assistant help                 show the command summary (in a message box
 | `--done`        | snapshot       | draw the all-done moment (use with `--time 3.3`)               |
 | `--screen N`    | snapshot       | typing screen: 0 code (default), 1 progress bars, 2 equalizer, 3 gear, 4 line graph |
 | `--sip`         | snapshot       | draw the middle of a coffee sip (snapshots never sip otherwise) |
+| `--coat NAME`   | snapshot       | the color, as named under right-click > **Color** (any case), for example `"Gray tabby"`; default Orange tabby |
+| `--seed N`      | snapshot       | where the patches sit on patched coats (default 1)              |
 
-Options go after the command: `kitten-assistant say "Backup" --status C:\jobs\status.txt`.
+Options can go before or after the command: `kitten-assistant say "Backup" --status C:\jobs\status.txt`.
+Options that take a value use the next word as the value.
 
 ## 5. Choosing a status file
 
@@ -343,9 +366,9 @@ for that project only), and make sure the assistant can run
 - **It stays on top** of other windows by default but never takes the keyboard focus, and it
   has no taskbar button. Clicks on the clear area around the kitten go through to whatever is
   behind it.
-- **It stays out of your games' way:** while a full-screen (or borderless full-screen) app or
-  game has the focus, the kitten holds still and only redraws when its status changes. It
-  animates again as soon as you switch away.
+- **It keeps going while you play:** the kitten keeps animating and showing new statuses while
+  a full-screen (or borderless full-screen) app or game has the focus, at the same light frame
+  rate, and never takes the focus.
 - **Always on top on or off:** right-click the kitten and click **Always on top**. A check
   mark means on. Off lets other windows cover the kitten (click the desktop or minimize them
   to see it again). The choice is saved in `kitten-assistant.ini` (`always_on_top=0` or `1`)
@@ -354,6 +377,22 @@ for that project only), and make sure the assistant can run
   opens, create a shortcut to `kitten-assistant.exe`. Add any options at the end of the
   shortcut's **Target** field, for example
   `"C:\Tools\KittenAssistant\kitten-assistant.exe" --status C:\jobs\status.txt`.
+
+### The settings file
+
+Everything you pick in the right-click menu is saved in `kitten-assistant.ini` next to the exe,
+one `key=value` per line. You can edit it while the kitten is closed, or delete it to go back to
+all the defaults.
+
+| Key             | Set by                         | Meaning                                                  |
+|-----------------|--------------------------------|----------------------------------------------------------|
+| `position`      | dragging the kitten            | `x,y` of the top-left corner; removed by **Back to corner** and **Monitor** |
+| `monitor`       | **Monitor**, `--monitor N`     | the home display, for example `\\.\DISPLAY2`            |
+| `scale`         | **Size**                       | size multiplier, for example `1.5`; removed by **Default** |
+| `coat`          | **Color**                      | the color's name, for example `Gray tabby`               |
+| `coat_seed`     | **Color**                      | where the patches sit on patched coats                   |
+| `always_on_top` | **Always on top**              | `1` (default) or `0`                                     |
+| `auto_update`   | you, by hand                   | `0` turns off automatic updates (default on)             |
 
 ## 10. Snapshots
 
@@ -380,7 +419,9 @@ Leave out `--bg` for a transparent background.
 | It wakes up, then naps again a moment later    | Something writes `idle` or an empty file. A batch `echo.>` or an empty `Set-Content` makes an empty file. |
 | It keeps typing after the job ended            | The job stopped before it wrote `idle`. Use `finally` / `trap` ([section 6](#always-go-back-to-idle)). |
 | The text is cut off with "…"                   | Only two lines fit. Shorten the line and put the important words first.        |
-| The kitten is on the wrong screen             | Right-click it, open **Monitor** and pick the display. To forget the choice, delete `kitten-assistant.ini` next to the exe. |
+| It naps although PowerShell wrote the file     | Windows PowerShell's `>` and `Out-File` write UTF-16, which the kitten cannot read. Use `Set-Content` or `kitten-assistant say` ([section 2](#2-how-the-kitten-decides-what-to-show)). |
+| A script hangs on a `kitten-assistant` call    | A message box is waiting for OK (it may be behind other windows). Usually the status started with `--` and was read as an option; see [section 3](#3-commands). `help` and `version` also wait for OK. |
+| The kitten is on the wrong screen             | Right-click it, open **Monitor** and pick the display. Deleting `kitten-assistant.ini` next to the exe forgets this and every other saved choice. |
 | Nothing happens when I start it                | A kitten is already running (maybe dragged off-screen): run `kitten-assistant quit`, then start it again. |
 | An error message box appears                   | The message is also in `%TEMP%\kitten-assistant.log`.                           |
 | My screenshot has no kitten                    | Use `snapshot` instead (section 10).                                           |
@@ -402,4 +443,19 @@ The exe is `target\release\kitten-assistant.exe`. The source is small:
 src/main.rs     command line, window, timers, see-through window output
 src/scene.rs    the kitten, desk, computer, keyboard and their animation
 src/canvas.rs   drawing helpers (shapes, outline, text, word wrap)
+src/update.rs   the self-updater
 ```
+
+A build of your own shows "(local build)" under `version` and never updates itself.
+`cargo test --release` runs the tests.
+
+### How releases are made
+
+The workflow in `.github/workflows/release.yml` tests and builds the exe on every push.
+
+- A push to `main` replaces the `experimental` pre-release with the new build. Installed
+  kittens never update to it, and it never updates itself.
+- Publishing a GitHub release (not marked as a pre-release) whose tag is `v` plus the version in `Cargo.toml` (for example
+  `v0.1.1`) builds the exe for it and attaches `kitten-assistant.exe`, its `.sha256` and a
+  `release.json` with the version and build number. That is what installed kittens update to.
+  A tag that does not match the version fails the build.

@@ -324,40 +324,6 @@ mod win {
         last_status: String,
     }
 
-    /// The focused window fills its whole monitor (a full-screen or borderless game, a video), and it is not the
-    /// desktop or the kitten itself.
-    fn fullscreen_foreground(own: HWND) -> bool {
-        unsafe {
-            let fg = GetForegroundWindow();
-            if fg.is_null() || fg == own || fg == GetShellWindow() || fg == GetDesktopWindow() {
-                return false;
-            }
-            // a maximized window reaches past the monitor's edges too: only borderless or
-            // exclusive full-screen windows count
-            let style = GetWindowLongW(fg, GWL_STYLE) as u32;
-            if style & WS_CAPTION == WS_CAPTION || IsZoomed(fg) != 0 {
-                return false;
-            }
-            let mut class = [0u16; 16];
-            let n = GetClassNameW(fg, class.as_mut_ptr(), class.len() as i32).max(0) as usize;
-            let class = String::from_utf16_lossy(&class[..n]);
-            if class == "WorkerW" || class == "Progman" {
-                return false;
-            }
-            let mut r: RECT = std::mem::zeroed();
-            if GetWindowRect(fg, &mut r) == 0 {
-                return false;
-            }
-            let mut mi: MONITORINFO = std::mem::zeroed();
-            mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-            if GetMonitorInfoW(MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST), &mut mi) == 0 {
-                return false;
-            }
-            let m = mi.rcMonitor;
-            r.left <= m.left && r.top <= m.top && r.right >= m.right && r.bottom >= m.bottom
-        }
-    }
-
     thread_local! {
         static APP: RefCell<Option<App>> = const { RefCell::new(None) };
     }
@@ -408,32 +374,14 @@ mod win {
             let t = self.t();
             let age = if std::mem::take(&mut self.first_poll) { status_age(&self.status) } else { 0.0 };
             let status = read_status(&self.status);
-            let changed = status != self.last_status;
             self.scene.set_status_aged(&status, t, age);
             self.last_status = status;
-            // Every layered-window update makes Windows recompose the screen. While a full-screen app or game has
-            // the focus the kitten holds still (redrawn only when the status changes), so it never costs the game
-            // frames; otherwise a gentle frame rate: smooth enough while typing, lighter while napping.
-            let ms = if fullscreen_foreground(self.hwnd) {
-                if changed {
-                    self.frame();
-                }
-                0
-            } else if self.scene.busy {
-                33
-            } else {
-                66
-            };
+            // a gentle frame rate whatever has the focus: smooth enough while typing, lighter while napping
+            let ms = if self.scene.busy { 33 } else { 66 };
             if ms != self.frame_ms {
                 self.frame_ms = ms;
-                unsafe {
-                    if ms == 0 {
-                        KillTimer(self.hwnd, FRAME);
-                    } else {
-                        // a little slack lets Windows fold the tick into other wake-ups
-                        SetCoalescableTimer(self.hwnd, FRAME, ms, None, ms / 8);
-                    }
-                }
+                // a little slack lets Windows fold the tick into other wake-ups
+                unsafe { SetCoalescableTimer(self.hwnd, FRAME, ms, None, ms / 8) };
             }
         }
 

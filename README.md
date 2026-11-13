@@ -7,14 +7,15 @@ taskbar and shows what your background jobs are doing.
   bubble shows the task and how long it has been running. Each new status line gets a
   screen picked at random: scrolling code, progress bars, an equalizer, a spinning gear or
   a line graph.
-- **Waiting:** a line that starts with `Waiting` (for example `Waiting: test results`).
+- **Waiting:** a line that starts with `Waiting` or `Wait` (for example `Waiting: test results`).
   The kitten props its chin on a paw, drums the desk with the other, gives the
   hourglass on its screen a bored look and thinks "...".
-- **Problem:** a line that starts with `Failed` or `Error`. Ears droop, the kitten
-  frowns and the screen shows a blinking red X.
+- **Problem:** a line that starts with `Failed`, `Fail`, `Error` or `Problem`. Ears droop,
+  the kitten frowns and the screen shows a blinking red X.
 - **All done:** when a job goes back to idle, the kitten cheers with its paws up for a
-  moment, with sparkles and a green tick, before it settles down for a nap.
-- **Coffee break:** every minute or two while it works or waits, the kitten picks up its
+  moment, with sparkles and a green tick, before it settles down for a nap. A job that
+  ended on a problem line goes straight to sleep.
+- **Coffee break:** every 15 to 35 seconds while it is awake, the kitten picks up its
   mug, takes a sip with its eyes closed, puts it down and carries on.
 - **Idle:** the kitten naps on its keyboard. Zzz float up and the screen shows a moon
   and stars.
@@ -40,7 +41,21 @@ still running.
 
 ## Install
 
-Download `kitten-assistant.exe` from the Releases page, or build it yourself:
+Download `kitten-assistant.exe` from the
+[latest release](https://github.com/Hailey-Ross/hails.Kitten-Assistant/releases/latest) and
+put it in a folder of its own that you can write to (for example `C:\Tools\KittenAssistant`),
+because it keeps its settings and updates next to the exe. The `experimental` pre-release is
+the newest test build; pick it only if you want to try unfinished changes.
+
+### Updates
+
+A kitten from a numbered release updates itself: it checks GitHub 30 seconds after it
+starts and then every 6 hours, downloads a newer stable release, checks it and restarts
+with the same settings. `kitten-assistant update` checks right away. Add the line
+`auto_update=0` to `kitten-assistant.ini` next to the exe to turn this off. The
+`experimental` build and builds you make yourself never update themselves.
+
+### Build it yourself
 
 ```
 cargo build --release
@@ -65,17 +80,25 @@ kitten-assistant idle
 kitten-assistant quit
 ```
 
+Put the whole status in quotes, and do not start it with `--`: `kitten-assistant "--check-assets hang"`
+is read as an unknown option, not a status: an error message box opens and the call waits
+until someone clicks OK. Put a word in front, for example
+`kitten-assistant "Check: --check-assets hang"`.
+
 The bubble's timer starts again whenever the text changes. Saying the same text again keeps
 the count going.
 
 The [full guide](docs/USAGE.md) covers every command and option, the status file rules,
 scripts in several languages, recipes, starting with Windows and troubleshooting.
 
-Drag the kitten anywhere with the left mouse button. Right-click it for:
+Drag the kitten anywhere with the left mouse button. It remembers the spot and opens there
+next time. Right-click it for:
 
-- **Back to corner:** back to the bottom-right of its display.
+- **Back to corner:** back to the bottom-right of its display, and forget the dragged-to spot.
 - **Monitor:** pick which display the kitten lives on. It moves there at once and starts
   there from then on (the choice is saved in `kitten-assistant.ini` next to the exe).
+- **Color:** pick one of 32 coats, from tabbies and tuxedos to calico and galaxy. Patched
+  coats get new patches each time you pick them. Saved in `kitten-assistant.ini`.
 - **Size:** make the kitten bigger or smaller (50% to 300%), or back to the default that
   follows the display scaling. It resizes at once and keeps that size at every start (saved
   in `kitten-assistant.ini`); `--scale N` on the command line wins over it.
@@ -92,8 +115,8 @@ The kitten reads the first line of a text file every 2 seconds:
 | First line                 | Kitten                           |
 |----------------------------|----------------------------------|
 | any text                   | types, bubble shows the text     |
-| `Waiting...`               | waits, bubble shows the text     |
-| `Failed...` or `Error...`  | looks worried, bubble shows the text |
+| `Waiting...` or `Wait...`  | waits, bubble shows the text     |
+| `Failed...`, `Fail...`, `Error...` or `Problem...` | looks worried, bubble shows the text |
 | empty, missing, or `idle`  | naps (after a short cheer if a job just ended) |
 
 The default file is `status.txt` next to the exe. Pick another with `--status FILE`
@@ -159,25 +182,27 @@ kitten-assistant snapshot nap.png --bg 6a8caf
 
 `--time SECONDS` picks the animation moment. `--scale N` sets the size (default 2).
 `--screen N` picks the typing screen (0 code, 1 progress bars, 2 equalizer, 3 gear, 4 graph).
-Leave out `--bg` for a transparent PNG.
+`--sip` draws a coffee sip, `--coat NAME` picks a color (for example `--coat "Gray tabby"`) and
+`--seed N` moves the patches on patched coats. Leave out `--bg` for a transparent PNG.
 
 ## How it works
 
 - The art is drawn in code every frame with [tiny-skia](https://crates.io/crates/tiny-skia),
   using flat shapes with a soft outline. There are no image files. Text uses
-  [fontdue](https://crates.io/crates/fontdue) with Segoe UI from the Windows font folder.
+  [fontdue](https://crates.io/crates/fontdue) with Segoe UI from the Windows font folder
+  (Arial if Segoe UI is missing).
 - The frame goes to Windows as a per-pixel-alpha layered window (`UpdateLayeredWindow`).
   That gives the kitten soft edges on any wallpaper, and clicks pass through the clear
   parts.
-- The window is topmost, never takes focus and has no taskbar button. It is built to stay
+- The window stays on top (unless you turn that off), never takes focus and has no taskbar button. It is built to stay
   light: 30 fps while busy and 15 fps while napping at the lowest CPU priority in Windows'
   efficiency mode (about 1 ms of drawing a frame), only the part of the picture that changed
-  is handed to Windows, and while a borderless or exclusive full-screen app or game has the focus the kitten
-  holds still and only redraws when its status changes.
+  is handed to Windows. It keeps animating whatever has the focus, games included.
 - Ordinary screenshot tools may not capture layered windows. Use `snapshot` for
   pictures.
 
-Errors are written to `%TEMP%\kitten-assistant.log`.
+Errors are written to `%TEMP%\kitten-assistant.log`, except a mistyped option, which only
+shows its message box.
 
 ## Layout
 
@@ -185,6 +210,8 @@ Errors are written to `%TEMP%\kitten-assistant.log`.
 src/main.rs     command line, window, timers, layered-window output
 src/scene.rs    the kitten, desk, computer, keyboard and their animation
 src/canvas.rs   drawing helpers (shapes, outline, text, word wrap)
+src/update.rs   the self-updater (newest stable release, SHA-256 check, swap and restart)
+.github/        the build and release workflow
 docs/USAGE.md   the full guide
 skills/         a ready-made skill for using the kitten with an AI assistant
 ```
