@@ -19,7 +19,7 @@ Why? Long jobs (builds, renders, test runs, backups, scripts) give no sign of li
 
 - **Glanceable.** One short line and a mood you can read from across the room. No windows to open, no notifications to dismiss.
 - **Anything can drive it.** A command, a text file, a script in any language. If it can write a file, it can tell the kitten what it's doing.
-- **Light.** It runs at the lowest CPU priority in Windows' efficiency mode, draws about 30 frames a second while busy and 15 while napping, and keeps animating while a full-screen game has the focus without ever taking the focus itself.
+- **Light.** It runs at the lowest CPU priority in Windows' efficiency mode, draws about 30 frames a second while busy and 15 while napping (a frame takes 1 to 2 ms to draw, a few percent of one CPU core), and keeps animating while a full-screen game has the focus without ever taking the focus itself.
 - **Out of the way.** The window has no frame, is see-through around the kitten, has no taskbar button, and clicks on the clear parts go through to whatever is behind it.
 
 ## Getting started
@@ -185,6 +185,8 @@ cargo test --release
 ```
 
 The exe lands in `target\release\kitten-assistant.exe`. A build of your own shows "(local build)" under `version` and never updates itself.
+
+Changing how it draws? `cargo test --release -- --ignored --nocapture --test-threads=1 frame_` prints the time per frame for every mood (`FRAME_COST`), per drawing step (`FRAME_PART`) and one hash over the pixels of many frames (`FRAME_HASH`). A speed-up that leaves the hash the same draws exactly the same picture.
 
 ```
 src/main.rs     command line, window, timers, see-through window output

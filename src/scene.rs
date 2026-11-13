@@ -2323,3 +2323,100 @@ impl Scene {
         }
     }
 }
+
+#[cfg(test)]
+mod bench {
+    use super::*;
+    use std::time::Instant;
+
+    const MOODS: [&str; 9] = ["idle", "Writing release notes", "Waiting: CI", "Failed: build", "Testing: suite", "Building: release",
+        "Reviewing: PR 42", "Downloading: toolchain", "Planning: next release"];
+
+    fn scene(status: &str, coat: &str) -> Scene {
+        let mut s = Scene::new();
+        s.coat = Coat::named(coat);
+        s.patch_seed = 7;
+        s.set_status(status, 0.0);
+        s
+    }
+
+    /// Milliseconds per frame per mood: cargo test --release -- --ignored --nocapture frame_cost.
+    #[test]
+    #[ignore]
+    fn frame_cost() {
+        let sc = 1.25;
+        let mut pix = Pixmap::new((W * sc).ceil() as u32, (H * sc).ceil() as u32).unwrap();
+        for coat in ["Orange tabby", "Calico"] {
+            for status in MOODS {
+                let mut s = scene(status, coat);
+                let n = 600;
+                let start = Instant::now();
+                for i in 0..n {
+                    let t = i as f64 / 30.0;
+                    let p = s.update(t);
+                    s.render(&mut pix, sc, t, &p);
+                }
+                eprintln!("FRAME_COST {coat:13} {status:24} {:.3} ms", start.elapsed().as_secs_f64() * 1000.0 / n as f64);
+            }
+        }
+    }
+
+    /// Time per drawing step: cargo test --release -- --ignored --nocapture frame_parts.
+    #[test]
+    #[ignore]
+    fn frame_parts() {
+        let sc = 1.25;
+        let mut pix = Pixmap::new((W * sc).ceil() as u32, (H * sc).ceil() as u32).unwrap();
+        for coat in ["Orange tabby", "Calico"] {
+            let mut s = scene("Writing release notes", coat);
+            let p = s.update(3.0);
+            let n = 2000;
+            let mut time = |name: &str, f: &mut dyn FnMut(&mut Canvas)| {
+                let start = Instant::now();
+                for _ in 0..n {
+                    let mut c = Canvas::new(&mut pix, sc);
+                    f(&mut c);
+                }
+                eprintln!("FRAME_PART {coat:13} {name:10} {:.4} ms", start.elapsed().as_secs_f64() * 1000.0 / n as f64);
+            };
+            time("clear", &mut |c| c.pix.fill(Color::TRANSPARENT));
+            time("tail", &mut |c| s.tail(c, &p));
+            time("computer", &mut |c| s.computer(c, 3.0, &p));
+            time("body", &mut |c| s.body(c, &p));
+            time("desk", &mut |c| s.desk(c));
+            time("mug", &mut |c| s.mug(c, 3.0, MUG_HOME, 1.0, 0.0));
+            time("keyboard", &mut |c| s.keyboard(c, &p));
+            time("arms", &mut |c| s.arms(c, &p));
+            time("head", &mut |c| s.head(c, &p));
+            time("bubble", &mut |c| s.bubble(c, 3.0, &p));
+            time("patches", &mut |_| { std::hint::black_box(s.patches(CX, 126.0, 51.0, 40.0, 1, 3, 1)); });
+            time("clip mask", &mut |c| { c.clip(Some(&rrect(199.0, 121.0, 78.0, 60.0, 7.0))); c.clip(None); });
+        }
+    }
+    /// One hash over the exact pixels of many frames in every mood (with sips and refills), to prove a speed-up
+    /// draws the same: cargo test --release -- --ignored --nocapture frame_hash.
+    #[test]
+    #[ignore]
+    fn frame_hash() {
+        let sc = 1.25;
+        let mut pix = Pixmap::new((W * sc).ceil() as u32, (H * sc).ceil() as u32).unwrap();
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for coat in ["Orange tabby", "Calico", "Galaxy"] {
+            for status in MOODS {
+                let mut s = scene(status, coat);
+                s.next_sip = 3.0;
+                for i in 0..900 {
+                    let t = i as f64 / 30.0;
+                    let p = s.update(t);
+                    if i % 7 == 0 {
+                        s.render(&mut pix, sc, t, &p);
+                        for b in pix.data() {
+                            h = (h ^ *b as u64).wrapping_mul(0x0100_0000_01b3);
+                        }
+                    }
+                }
+            }
+        }
+        eprintln!("FRAME_HASH {h:016x}");
+    }
+}

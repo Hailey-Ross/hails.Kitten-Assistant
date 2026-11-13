@@ -71,13 +71,27 @@ impl<'a> Canvas<'a> {
         self.stroke(path, INK, OUTLINE);
     }
 
-    /// Restrict drawing to `path` (None removes the clip).
+    /// Restrict drawing to `path` (None removes the clip). The mask's memory is kept for the next clip of the same
+    /// size instead of a new full-size mask every time.
     pub fn clip(&mut self, path: Option<&Path>) {
-        self.clip = path.map(|p| {
-            let mut m = Mask::new(self.pix.width(), self.pix.height()).expect("mask");
-            m.fill_path(p, FillRule::Winding, true, self.ts);
-            m
-        });
+        let old = self.clip.take();
+        let Some(p) = path else {
+            if let Some(m) = old {
+                SPARE_MASK.with(|s| *s.borrow_mut() = Some(m));
+            }
+            return;
+        };
+        let (w, h) = (self.pix.width(), self.pix.height());
+        let reuse = old.or_else(|| SPARE_MASK.with(|s| s.borrow_mut().take())).filter(|m| m.width() == w && m.height() == h);
+        let mut m = match reuse {
+            Some(mut m) => {
+                m.data_mut().fill(0);
+                m
+            }
+            None => Mask::new(w, h).expect("mask"),
+        };
+        m.fill_path(p, FillRule::Winding, true, self.ts);
+        self.clip = Some(m);
     }
 
     /// Text at design coordinates (x, baseline), size in design pixels.
@@ -88,7 +102,7 @@ impl<'a> Canvas<'a> {
         let (w, h) = (self.pix.width() as i32, self.pix.height() as i32);
         let data = self.pix.data_mut();
         for ch in s.chars() {
-            let (m, cov) = font.rasterize(ch, px);
+            let (m, cov) = glyph(font, ch, px);
             let gx = (pen + m.xmin as f32).round() as i32;
             let gy = (base - m.height as f32 - m.ymin as f32).round() as i32;
             for yy in 0..m.height {
@@ -116,6 +130,31 @@ impl<'a> Canvas<'a> {
             pen += m.advance_width;
         }
     }
+}
+
+thread_local! {
+    /// The last clip mask's memory, for the next clip.
+    static SPARE_MASK: std::cell::RefCell<Option<Mask>> = const { std::cell::RefCell::new(None) };
+    /// Rasterized glyphs by font, character and pixel size: the same text is drawn every frame.
+    static GLYPHS: std::cell::RefCell<std::collections::HashMap<(usize, char, u32), (fontdue::Metrics, std::rc::Rc<Vec<u8>>)>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+/// `font.rasterize`, remembered (a font is named by its file's hash: copies of one font file share glyphs).
+fn glyph(font: &fontdue::Font, ch: char, px: f32) -> (fontdue::Metrics, std::rc::Rc<Vec<u8>>) {
+    let key = (font.file_hash(), ch, px.to_bits());
+    GLYPHS.with(|g| {
+        let mut g = g.borrow_mut();
+        if g.len() > 4096 {
+            g.clear();
+        }
+        g.entry(key)
+            .or_insert_with(|| {
+                let (m, cov) = font.rasterize(ch, px);
+                (m, std::rc::Rc::new(cov))
+            })
+            .clone()
+    })
 }
 
 /// Width of `s` in design pixels.
