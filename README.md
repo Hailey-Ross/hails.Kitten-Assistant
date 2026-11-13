@@ -113,7 +113,7 @@ The first word of the status line picks how the kitten acts (any case; the word 
 | All done | (a busy line turns idle) | for a moment: paws up, sparkles, a green tick and "all done!", then the nap. A job that ended on a problem line goes straight to sleep |
 | Napping | (idle) | asleep on its keyboard, Zzz floating up, a moon and stars on the screen |
 
-**Coffee breaks:** every 15 to 35 seconds while it's awake (except while testing, when its paws are on the controller), the kitten lifts its mug, takes a sip with its eyes closed, puts it down and carries on. Now and then the mug turns out to be empty: the kitten peers in, looks annoyed, fetches a kettle, refills the mug and settles back content.
+**Coffee breaks:** every 15 to 35 seconds while it's awake (except while testing, when its paws are on the controller), the kitten lifts its mug, takes a sip with its eyes closed, puts it down and carries on. Now and then the mug turns out to be empty: the kitten peers in, looks annoyed, fetches a kettle, refills the mug and settles back content with a sip of the fresh coffee.
 
 | Waiting | Problem | Testing |
 |---------|---------|---------|

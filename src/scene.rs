@@ -879,7 +879,9 @@ impl Scene {
             }
             self.next_sip = t + 15.0 + self.rand() * 20.0;
         }
-        let sp = ((t - self.sip_start) / SIP_SECS) as f32;
+        // a refill ends with a sip of the fresh coffee
+        let after = ((t - self.refill_start - REFILL_SECS) / SIP_SECS) as f32;
+        let sp = if (0.0..1.0).contains(&after) { after } else { ((t - self.sip_start) / SIP_SECS) as f32 };
         let sip = (busy && hands_free && (0.0..1.0).contains(&sp)).then_some(sp);
         let rp = ((t - self.refill_start) / REFILL_SECS) as f32;
         let refill = (busy && hands_free && (0.0..1.0).contains(&rp)).then_some(rp);

@@ -89,7 +89,7 @@ kitten never sips. `snapshot --sip` draws the middle of a sip.
 About one coffee break in four, the mug turns out to be empty (about 7 seconds): the kitten
 lifts it, looks in, droops its ears with a little red annoyed mark, holds the mug out in front
 of it, reaches off the left side of the picture for a red kettle, pours until the mug is full,
-puts the kettle back and settles in, eyes closed and content. The mug steams again once it is
+puts the kettle back and settles in, eyes closed and content, then takes a proper sip of the fresh coffee. The mug steams again once it is
 full.
 
 Details that matter when you write the file yourself:
