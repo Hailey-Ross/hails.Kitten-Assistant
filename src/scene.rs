@@ -5,7 +5,7 @@
 
 use std::f32::consts::PI;
 
-use tiny_skia::{Color, Pixmap};
+use tiny_skia::{Color, Path, Pixmap, Transform};
 
 use crate::canvas::*;
 
@@ -558,7 +558,8 @@ fn mug_at(p: f32, hy: f32) -> (f32, f32) {
     // straight up first, then across to the mouth, so the mug clears the keyboard's corner
     let up = smooth(a / 0.55);
     let across = smooth((a - 0.35) / 0.65);
-    let mouth = (CX + 14.0, hy + 19.0);
+    // the mug's middle beside the mouth, so its tipped rim meets the open mouth's corner without hiding it
+    let mouth = (CX + 20.0, hy + 21.0);
     (MUG_HOME.0 + (mouth.0 - MUG_HOME.0) * across, MUG_HOME.1 + (mouth.1 - MUG_HOME.1) * up)
 }
 
@@ -597,6 +598,8 @@ pub struct Pose {
     fill: f32,
     /// the annoyed mark by the head (0 or 1)
     anger: f32,
+    /// how far into a mouthful (0..1): the mouth opens and the mug tips toward it
+    sipping: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -702,6 +705,7 @@ impl Scene {
             kettle: None,
             fill: 1.0,
             anger: 0.0,
+            sipping: 0.0,
         };
         let mut c = Canvas::new_at(pix, sc, cx - CX * sc, cy + 6.0 * sc);
         self.head(&mut c, &p);
@@ -998,6 +1002,9 @@ impl Scene {
         };
         // content again once the mug is full
         let pleased = refill.is_some_and(|p| p > 0.9);
+        // the mouthful: the mug tips and the mouth opens (on the refill's first try too, before it finds the mug empty)
+        let bump = |x: f32, a: f32, b: f32, c: f32, d: f32| if x < b { smooth((x - a) / (b - a)) } else if x < c { 1.0 } else { 1.0 - smooth((x - c) / (d - c)) };
+        let sipping = sip.map_or(0.0, |p| bump(p, 0.34, 0.42, 0.60, 0.68)).max(refill.map_or(0.0, |p| 0.8 * bump(p, 0.16, 0.20, 0.25, 0.29)));
 
         Pose {
             hy,
@@ -1020,6 +1027,7 @@ impl Scene {
             kettle,
             fill,
             anger,
+            sipping,
         }
     }
 
@@ -1041,7 +1049,7 @@ impl Scene {
         // the mug sits on the desk unless a paw holds it
         let mug_held = p.sip.is_some() || p.refill.is_some_and(|r| r < 0.96);
         if !mug_held {
-            self.mug(&mut c, tf, MUG_HOME, p.fill);
+            self.mug(&mut c, tf, MUG_HOME, p.fill, 0.0);
         }
         // the keyboard is put away while testing: the gamepad is held in front of the arms, the paws wrapped over
         // its grips
@@ -1123,7 +1131,7 @@ impl Scene {
             c.stroke(&arm, self.coat.fur, 10.5);
             c.blob(&oval(p.r.x, py, PAW_W, 13.0), self.coat.fur);
             if mug_held {
-                self.mug(&mut c, tf, p.mug, p.fill);
+                self.mug(&mut c, tf, p.mug, p.fill, p.sipping);
             }
         }
         if p.refill.is_some() {
@@ -2037,23 +2045,26 @@ impl Scene {
         c.stroke(&quad(a.0, a.1, b.0, b.1 + 6.0, e.0, e.1), Rgba::rgb(60, 60, 70), 2.4);
     }
 
-    /// The mug at `at`, `fill` full (0 shows its empty inside).
-    fn mug(&self, c: &mut Canvas, t: f32, at: (f32, f32), fill: f32) {
+    /// The mug at `at`, `fill` full (0 shows its empty inside), tipped toward the mouth by `tip` (0..1).
+    fn mug(&self, c: &mut Canvas, t: f32, at: (f32, f32), fill: f32, tip: f32) {
         let (dx, dy) = (at.0 - MUG_HOME.0, at.1 - MUG_HOME.1);
+        // tipping turns it about its base so the rim leans left, to the mouth
+        let turn = Transform::from_rotate_at(-35.0 * tip, 179.0 + dx, 208.0 + dy);
+        let tp = |p: Path| if tip > 0.0 { p.clone().transform(turn).unwrap_or(p) } else { p };
         // drawn MUG_SCALE times its outline numbers, grown from the middle of its bottom (so it still sits on the desk)
         let s = MUG_SCALE;
         let m = |x: f32, y: f32| (179.0 + dx + (x - 179.0) * s, 208.0 + dy + (y - 208.0) * s);
         let (hx, hy) = m(181.0, 197.0);
-        let handle = oval(hx, hy, 8.0 * s, 8.0 * s);
+        let handle = tp(oval(hx, hy, 8.0 * s, 8.0 * s));
         c.stroke(&handle, INK, 4.6 * s);
         c.stroke(&handle, MUG, 2.2 * s);
         let (bx, by) = m(173.0, 193.0);
-        c.blob(&rrect(bx, by, 12.0 * s, 15.0 * s, 3.0 * s), MUG);
+        c.blob(&tp(rrect(bx, by, 12.0 * s, 15.0 * s, 3.0 * s)), MUG);
         let (ix, iy) = m(174.5, 193.5);
-        c.fill(&oval(ix, iy, 9.0 * s, 3.0 * s), Rgba::rgb(86, 150, 182));
-        c.fill(&oval(ix, iy, 9.0 * s, 3.0 * s), Rgba::rgb(120, 76, 52).fade(fill));
+        c.fill(&tp(oval(ix, iy, 9.0 * s, 3.0 * s)), Rgba::rgb(86, 150, 182));
+        c.fill(&tp(oval(ix, iy, 9.0 * s, 3.0 * s)), Rgba::rgb(120, 76, 52).fade(fill));
         let (l0, l1) = (m(175.0, 201.0), m(183.0, 201.0));
-        c.stroke(&line(l0.0, l0.1, l1.0, l1.1), WHITE.fade(0.7), 1.6 * s);
+        c.stroke(&tp(line(l0.0, l0.1, l1.0, l1.1)), WHITE.fade(0.7), 1.6 * s);
         // steam rises only while a full mug sits on the desk
         if self.busy && dx == 0.0 && dy == 0.0 && fill >= 1.0 {
             for i in 0..2 {
@@ -2220,7 +2231,11 @@ impl Scene {
         let nose = poly(&[(CX - 4.5, hy + 6.0), (CX + 4.5, hy + 6.0), (CX, hy + 10.5)]);
         c.fill(&nose, self.coat.pink);
         c.stroke(&nose, PINK_DARK, 1.2);
-        if p.droop > 0.5 {
+        if p.sipping > 0.15 {
+            // open for the mouthful
+            let h = 1.5 + 4.5 * p.sipping;
+            c.blob(&oval(CX - 3.5, hy + 12.0, 7.0, h), Rgba::rgb(150, 60, 70));
+        } else if p.droop > 0.5 {
             // a small worried frown
             c.stroke(&quad(CX - 6.0, hy + 16.0, CX, hy + 11.5, CX + 6.0, hy + 16.0), INK, 1.5);
         } else {

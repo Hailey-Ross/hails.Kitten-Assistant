@@ -250,7 +250,11 @@ fn snapshot(o: &Opts) -> Result<(), String> {
     s.coat = scene::Coat::named(o.coat.as_deref().unwrap_or(""));
     s.patch_seed = o.seed.unwrap_or(1);
     // no surprise sips in snapshots; --sip puts one in its drinking moment
-    s.next_sip = if o.sip { t_end - 1.25 } else { f64::MAX };
+    // --sip draws a real sip (never an empty-mug refill) in its drinking moment
+    s.next_sip = f64::MAX;
+    if o.sip {
+        s.sip_start = t_end - 1.25;
+    }
     // --refill P: that moment (0..1) of an empty-mug refill (not in the usage text)
     if let Some(p) = o.refill {
         s.refill_start = t_end - p * 7.0;
