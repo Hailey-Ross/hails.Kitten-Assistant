@@ -92,7 +92,7 @@ mark is fine) and replace the file, do not append.
 - **Short:** about 50 characters. The bubble shows two lines of about 35 characters and wraps
   at word breaks, then cuts the rest with "…"; past about 65 characters the end is usually lost.
 - **Most useful words first:** `Tests: 3 of 12 suites` beats `Currently running the test suites`.
-- **Plain words the user recognises:** the task they asked for, the step you are on. No
+- **Plain words the user recognizes:** the task they asked for, the step you are on. No
   internal ids or tool names unless the user uses them too.
 - **Progress when you know it:** `Refactor: file 4 of 9`, `Build 2 of 3 targets`.
 - **Change the text for each step:** the bubble timer restarts when the text changes, so each

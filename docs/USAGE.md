@@ -69,6 +69,13 @@ a job that ended badly goes straight to sleep. To use the moods from a script, w
 `Waiting: ...` while you wait on something (a download, a review, another machine) and
 `Failed: ...` when a step fails, and leave the problem line up until someone has seen it.
 
+Now and then (at random, every 15 to 35 seconds) a busy, waiting or problem kitten takes a
+coffee break of about 2.4 seconds: the paw on the mug's side (the right of the picture) lifts
+the mug straight up and over to its mouth, the kitten sips with its eyes closed, puts the mug
+back and returns to its mood. While typing, the other paw rests on the keys during the sip;
+while waiting, the chin stays propped. The status line does not change it, and a napping
+kitten never sips. `snapshot --sip` draws the middle of a sip.
+
 Details that matter when you write the file yourself:
 
 - **Only the first line counts.** Anything after the first line break is ignored, so you can
@@ -95,8 +102,19 @@ kitten-assistant say "some text"      write "some text" to the status file
 kitten-assistant idle                 write "idle" to the status file
 kitten-assistant quit                 close the running kitten
 kitten-assistant snapshot out.png     render one frame to a PNG, no window
+kitten-assistant update               check for a newer release now and install it
+kitten-assistant version              show the version (in a message box)
 kitten-assistant help                 show the command summary (in a message box)
 ```
+
+- **Updates install themselves.** A kitten downloaded from the Releases page checks GitHub
+  30 seconds after it starts and then every 6 hours. When a newer stable release is out, it
+  downloads it, checks it against the SHA-256 the release publishes, swaps it in and restarts
+  with the same options (your status, color and position stay). Pre-releases (the rolling
+  `experimental` build) are never installed this way. `update` checks right away. To turn
+  automatic updates off, add the line `auto_update=0` to `kitten-assistant.ini` next to the
+  exe. A kitten you built yourself never updates itself. Update problems are written to
+  `%TEMP%\kitten-assistant.log`.
 
 - `say` and `idle` only write the status file and exit at once. They work even if no kitten is
   running; the kitten picks the line up when it starts.
@@ -123,9 +141,10 @@ kitten-assistant help                 show the command summary (in a message box
 | `--busy TEXT`   | snapshot       | draw the busy pose with TEXT; default is napping                |
 | `--minutes N`   | snapshot       | elapsed minutes shown in the bubble                             |
 | `--time SECONDS`| snapshot       | which moment of the animation to draw (default 3.2)             |
-| `--bg RRGGBB`   | snapshot       | background colour as hex, for example `6a8caf`; default transparent |
+| `--bg RRGGBB`   | snapshot       | background color as hex, for example `6a8caf`; default transparent |
 | `--done`        | snapshot       | draw the all-done moment (use with `--time 3.3`)               |
 | `--screen N`    | snapshot       | typing screen: 0 code (default), 1 progress bars, 2 equalizer, 3 gear, 4 line graph |
+| `--sip`         | snapshot       | draw the middle of a coffee sip (snapshots never sip otherwise) |
 
 Options go after the command: `kitten-assistant say "Backup" --status C:\jobs\status.txt`.
 
@@ -289,9 +308,19 @@ for that project only), and make sure the assistant can run
 
 ## 9. Moving, resizing and starting with Windows
 
-- **Move it:** drag the kitten with the left mouse button. It goes back to the bottom-right
-  corner of its display the next time it starts.
-- **Back to the corner:** right-click the kitten and pick **Back to corner**.
+- **Move it:** drag the kitten with the left mouse button. It remembers the spot (saved in
+  `kitten-assistant.ini` as `position=x,y`) and opens there next time, until you drag it
+  again. If that spot is no longer on any display (a monitor was unplugged), it starts in the
+  corner instead.
+- **Back to the corner:** right-click the kitten and pick **Back to corner**. This also forgets
+  the dragged-to spot, so it starts in the corner again. Picking a display under **Monitor**
+  (or `--monitor N`) does the same.
+- **Change its color:** right-click the kitten and open **Color**. There are 32 coats: tabbies
+  (orange, ginger, cream, gray, silver, brown, golden), solids (black, white, Russian blue,
+  chocolate, cinnamon, lilac, fawn), a tuxedo, two pointed coats, patched ones (calico,
+  tortoiseshell, cow cat, dilute calico) and fun ones (cotton candy, lavender, mint chip, sky, lemon,
+  peach, strawberry, grape, galaxy, ghost, rainbow; most of these have their own markings: hearts, flower dots, chocolate chips, clouds, seeds and a leafy top, stars, rainbow stripes). The current one has a check mark, and the
+  choice is saved in `kitten-assistant.ini` (`coat=Gray tabby`, for example). Patched coats (calico, dilute calico, tortoiseshell, cow cat) roll new patches every time you pick a color: where they sit, their size and shape, and which ears are colored. The roll is saved too (`coat_seed=`), so the kitten looks the same after a restart. Pick the same color again for a new roll.
 - **Pick a display:** with more than one monitor, right-click the kitten and open **Monitor**.
   It lists every display with the number Windows uses in Settings > System > Display, the
   model name when Windows knows it and the resolution; the current one has a check mark.
@@ -304,9 +333,16 @@ for that project only), and make sure the assistant can run
   above or left of the main one have negative positions).
 - **Bigger or smaller:** `kitten-assistant --scale 3` (whole or decimal numbers). By default the
   size follows your screen's scaling setting.
-- **It stays on top** of other windows but never takes the keyboard focus, and it has no
-  taskbar button. Clicks on the clear area around the kitten go through to whatever is
+- **It stays on top** of other windows by default but never takes the keyboard focus, and it
+  has no taskbar button. Clicks on the clear area around the kitten go through to whatever is
   behind it.
+- **It stays out of your games' way:** while a full-screen (or borderless full-screen) app or
+  game has the focus, the kitten holds still and only redraws when its status changes. It
+  animates again as soon as you switch away.
+- **Always on top on or off:** right-click the kitten and click **Always on top**. A check
+  mark means on. Off lets other windows cover the kitten (click the desktop or minimize them
+  to see it again). The choice is saved in `kitten-assistant.ini` (`always_on_top=0` or `1`)
+  and used at every start.
 - **Start with Windows:** press Win+R, type `shell:startup` and press Enter. In the folder that
   opens, create a shortcut to `kitten-assistant.exe`. Add any options at the end of the
   shortcut's **Target** field, for example

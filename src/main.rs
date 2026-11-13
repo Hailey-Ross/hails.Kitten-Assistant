@@ -8,6 +8,7 @@
 
 mod canvas;
 mod scene;
+mod update;
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -20,6 +21,8 @@ kitten-assistant say \"some text\"      kitten types, bubble shows the text
 kitten-assistant idle                 kitten naps
 kitten-assistant quit                 close a running kitten
 kitten-assistant snapshot out.png     render one frame to a PNG
+kitten-assistant update               check for a newer stable release now and install it
+kitten-assistant version              show the version
 
 options:
   --status FILE    status file (default: status.txt next to the exe, or %KITTEN_STATUS%)
@@ -30,9 +33,12 @@ snapshot options:
   --busy TEXT      render the busy pose with TEXT (default: napping)
   --time SECONDS   animation time to render (default 3.2)
   --minutes N      elapsed minutes shown in the bubble
-  --bg RRGGBB      background colour (default: transparent)
+  --bg RRGGBB      background color (default: transparent)
   --done           render the all-done moment
-  --screen N       typing screen 0-4 (code, progress, equalizer, gear, graph; default 0)";
+  --screen N       typing screen 0-4 (code, progress, equalizer, gear, graph; default 0)
+  --sip            render the middle of a coffee sip
+  --coat NAME      the color (as in right-click > Color, e.g. \"Gray tabby\"; default: Orange tabby)
+  --seed N         where the patches sit on patched coats (default 1)";
 
 #[derive(Default)]
 struct Opts {
@@ -49,6 +55,9 @@ struct Opts {
     bg: Option<String>,
     done: bool,
     screen: Option<usize>,
+    sip: bool,
+    coat: Option<String>,
+    seed: Option<u32>,
 }
 
 fn parse() -> Result<Opts, String> {
@@ -68,6 +77,9 @@ fn parse() -> Result<Opts, String> {
             "--minutes" => o.minutes = Some(val()?.parse().map_err(|_| "bad --minutes")?),
             "--bg" => o.bg = Some(val()?),
             "--done" => o.done = true,
+            "--sip" => o.sip = true,
+            "--coat" => o.coat = Some(val()?),
+            "--seed" => o.seed = Some(val()?.parse().map_err(|_| "bad --seed")?),
             "--screen" => o.screen = Some(val()?.parse().map_err(|_| "bad --screen")?),
             "-h" | "--help" | "help" => return Err(USAGE.into()),
             _ if a.starts_with("--") => return Err(format!("unknown option {a}\n\n{USAGE}")),
@@ -146,6 +158,11 @@ fn main() {
             Ok(())
         }
         "snapshot" => snapshot(&o),
+        "update" => win::update_now(),
+        "version" => {
+            win::message(&format!("Kitten Assistant {}", update::label()));
+            Ok(())
+        }
         other => Err(format!("unknown command {other}\n\n{USAGE}")),
     };
     if let Err(e) = result {
@@ -162,6 +179,10 @@ fn snapshot(o: &Opts) -> Result<(), String> {
     s.set_status(o.busy.as_deref().unwrap_or("idle"), 0.0);
     s.since = -o.minutes.unwrap_or(0.0) * 60.0;
     s.screen = o.screen.unwrap_or(0) % 5;
+    s.coat = scene::Coat::named(o.coat.as_deref().unwrap_or(""));
+    s.patch_seed = o.seed.unwrap_or(1);
+    // no surprise sips in snapshots; --sip puts one in its drinking moment
+    s.next_sip = if o.sip { t_end - 1.25 } else { f64::MAX };
     if o.done {
         // the "all done!" moment, one second in
         s.set_status("job", 0.0);
@@ -200,7 +221,11 @@ mod win {
     use windows_sys::Win32::Foundation::*;
     use windows_sys::Win32::Graphics::Gdi::*;
     use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
-    use windows_sys::Win32::System::Threading::CreateMutexW;
+    use windows_sys::Win32::System::Threading::{
+        CreateMutexW, GetCurrentProcess, ProcessPowerThrottling, SetPriorityClass, SetProcessInformation,
+        IDLE_PRIORITY_CLASS, PROCESS_POWER_THROTTLING_CURRENT_VERSION, PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
+        PROCESS_POWER_THROTTLING_STATE,
+    };
     use windows_sys::Win32::UI::HiDpi::*;
     use windows_sys::Win32::UI::WindowsAndMessaging::*;
 
@@ -209,7 +234,19 @@ mod win {
     const POLL: usize = 2;
     const MENU_CORNER: usize = 1;
     const MENU_QUIT: usize = 2;
+    const MENU_TOPMOST: usize = 3;
     const MENU_MONITOR: usize = 100; // + index into monitors()
+    const MENU_COAT: usize = 200; // + index into scene::COATS
+
+    /// Stay above other windows (`always_on_top` in the ini; on unless it says 0).
+    fn topmost() -> bool {
+        setting("always_on_top").map_or(true, |v| v != "0")
+    }
+
+    unsafe fn apply_topmost(hwnd: HWND, on: bool) {
+        let after = if on { HWND_TOPMOST } else { HWND_NOTOPMOST };
+        SetWindowPos(hwnd, after, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    }
 
     fn wide(s: &str) -> Vec<u16> {
         s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -243,6 +280,42 @@ mod win {
         bits: *mut u8,
         frame_ms: u32,
         first_poll: bool,
+        last_frame: Vec<u8>,
+        last_status: String,
+    }
+
+    /// The focused window fills its whole monitor (a full-screen or borderless game, a video), and it is not the
+    /// desktop or the kitten itself.
+    fn fullscreen_foreground(own: HWND) -> bool {
+        unsafe {
+            let fg = GetForegroundWindow();
+            if fg.is_null() || fg == own || fg == GetShellWindow() || fg == GetDesktopWindow() {
+                return false;
+            }
+            // a maximized window reaches past the monitor's edges too: only borderless or
+            // exclusive full-screen windows count
+            let style = GetWindowLongW(fg, GWL_STYLE) as u32;
+            if style & WS_CAPTION == WS_CAPTION || IsZoomed(fg) != 0 {
+                return false;
+            }
+            let mut class = [0u16; 16];
+            let n = GetClassNameW(fg, class.as_mut_ptr(), class.len() as i32).max(0) as usize;
+            let class = String::from_utf16_lossy(&class[..n]);
+            if class == "WorkerW" || class == "Progman" {
+                return false;
+            }
+            let mut r: RECT = std::mem::zeroed();
+            if GetWindowRect(fg, &mut r) == 0 {
+                return false;
+            }
+            let mut mi: MONITORINFO = std::mem::zeroed();
+            mi.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+            if GetMonitorInfoW(MonitorFromWindow(fg, MONITOR_DEFAULTTONEAREST), &mut mi) == 0 {
+                return false;
+            }
+            let m = mi.rcMonitor;
+            r.left <= m.left && r.top <= m.top && r.right >= m.right && r.bottom >= m.bottom
+        }
     }
 
     thread_local! {
@@ -264,40 +337,103 @@ mod win {
         fn poll(&mut self) {
             let t = self.t();
             let age = if std::mem::take(&mut self.first_poll) { status_age(&self.status) } else { 0.0 };
-            self.scene.set_status_aged(&read_status(&self.status), t, age);
-            // smooth while typing, lighter while napping
-            let ms = if self.scene.busy { 33 } else { 66 };
+            let status = read_status(&self.status);
+            let changed = status != self.last_status;
+            self.scene.set_status_aged(&status, t, age);
+            self.last_status = status;
+            // Every layered-window update makes Windows recompose the screen. While a full-screen app or game has
+            // the focus the kitten holds still (redrawn only when the status changes), so it never costs the game
+            // frames; otherwise a gentle frame rate: smooth enough while typing, lighter while napping.
+            let ms = if fullscreen_foreground(self.hwnd) {
+                if changed {
+                    self.frame();
+                }
+                0
+            } else if self.scene.busy {
+                33
+            } else {
+                66
+            };
             if ms != self.frame_ms {
                 self.frame_ms = ms;
-                unsafe { SetTimer(self.hwnd, FRAME, ms, None) };
+                unsafe {
+                    if ms == 0 {
+                        KillTimer(self.hwnd, FRAME);
+                    } else {
+                        // a little slack lets Windows fold the tick into other wake-ups
+                        SetCoalescableTimer(self.hwnd, FRAME, ms, None, ms / 8);
+                    }
+                }
             }
         }
 
-        /// Copy the frame (premultiplied RGBA) into the DIB (premultiplied BGRA) and
-        /// hand it to Windows as a per-pixel-alpha layered window.
+        /// Hand the frame to Windows as a per-pixel-alpha layered window, as cheaply as possible:
+        /// only the rectangle that changed since the last frame is copied (premultiplied RGBA
+        /// into the DIB's premultiplied BGRA) and marked dirty, and nothing is sent when the
+        /// picture did not change at all.
         fn push(&mut self) {
-            let (w, h) = (self.pix.width() as i32, self.pix.height() as i32);
+            let (w, h) = (self.pix.width() as usize, self.pix.height() as usize);
             let src = self.pix.data();
+            let full = self.last_frame.len() != src.len();
+            let (mut x0, mut y0, mut x1, mut y1) = if full { (0, 0, w, h) } else { (w, 0, 0, 0) };
+            if !full {
+                let mut any = false;
+                for y in 0..h {
+                    let row = y * w * 4..(y + 1) * w * 4;
+                    let (a, b) = (&src[row.clone()], &self.last_frame[row]);
+                    if a == b {
+                        continue;
+                    }
+                    let differs = |i: usize| a[i * 4..i * 4 + 4] != b[i * 4..i * 4 + 4];
+                    let first = (0..w).find(|&i| differs(i)).unwrap_or(0);
+                    let last = (0..w).rev().find(|&i| differs(i)).unwrap_or(w - 1);
+                    if !any {
+                        y0 = y;
+                        any = true;
+                    }
+                    x0 = x0.min(first);
+                    x1 = x1.max(last + 1);
+                    y1 = y + 1;
+                }
+                if !any {
+                    return;
+                }
+            } else {
+                self.last_frame = vec![0; src.len()];
+            }
             let dst = unsafe { std::slice::from_raw_parts_mut(self.bits, src.len()) };
-            for (d, s) in dst.chunks_exact_mut(4).zip(src.chunks_exact(4)) {
-                d[0] = s[2];
-                d[1] = s[1];
-                d[2] = s[0];
-                d[3] = s[3];
+            for y in y0..y1 {
+                let span = (y * w + x0) * 4..(y * w + x1) * 4;
+                self.last_frame[span.clone()].copy_from_slice(&src[span.clone()]);
+                for (d, s) in dst[span.clone()].chunks_exact_mut(4).zip(src[span].chunks_exact(4)) {
+                    d[0] = s[2];
+                    d[1] = s[1];
+                    d[2] = s[0];
+                    d[3] = s[3];
+                }
             }
-            unsafe {
-                let screen = GetDC(null_mut());
-                let size = SIZE { cx: w, cy: h };
-                let origin = POINT { x: 0, y: 0 };
-                let blend = BLENDFUNCTION {
-                    BlendOp: AC_SRC_OVER as u8,
-                    BlendFlags: 0,
-                    SourceConstantAlpha: 255,
-                    AlphaFormat: AC_SRC_ALPHA as u8,
-                };
-                UpdateLayeredWindow(self.hwnd, screen, null(), &size, self.mem_dc, &origin, 0, &blend, ULW_ALPHA);
-                ReleaseDC(null_mut(), screen);
-            }
+            let size = SIZE { cx: w as i32, cy: h as i32 };
+            let origin = POINT { x: 0, y: 0 };
+            let blend = BLENDFUNCTION {
+                BlendOp: AC_SRC_OVER as u8,
+                BlendFlags: 0,
+                SourceConstantAlpha: 255,
+                AlphaFormat: AC_SRC_ALPHA as u8,
+            };
+            let dirty = RECT { left: x0 as i32, top: y0 as i32, right: x1 as i32, bottom: y1 as i32 };
+            let info = UPDATELAYEREDWINDOWINFO {
+                cbSize: std::mem::size_of::<UPDATELAYEREDWINDOWINFO>() as u32,
+                hdcDst: null_mut(),
+                pptDst: null(),
+                psize: &size,
+                hdcSrc: self.mem_dc,
+                pptSrc: &origin,
+                crKey: 0,
+                pblend: &blend,
+                dwFlags: ULW_ALPHA,
+                prcDirty: &dirty,
+            };
+            unsafe { UpdateLayeredWindowIndirect(self.hwnd, &info) };
         }
     }
 
@@ -366,10 +502,20 @@ mod win {
     }
 
     fn save_setting(key: &str, value: &str) {
+        write_setting(key, Some(value));
+    }
+
+    fn clear_setting(key: &str) {
+        write_setting(key, None);
+    }
+
+    fn write_setting(key: &str, value: Option<&str>) {
         let Some(p) = settings_path() else { return };
         let old = std::fs::read_to_string(&p).unwrap_or_default();
         let mut lines: Vec<String> = old.lines().filter(|l| l.split('=').next().map(str::trim) != Some(key)).map(String::from).collect();
-        lines.push(format!("{key}={value}"));
+        if let Some(value) = value {
+            lines.push(format!("{key}={value}"));
+        }
         if let Err(e) = std::fs::write(&p, lines.join("\n") + "\n") {
             log(&format!("could not save {}: {e}", p.display()));
         }
@@ -396,11 +542,22 @@ mod win {
         (wa.right - w - 20, wa.bottom - h)
     }
 
+    /// Back to the default spot; a dragged-to position is forgotten.
     unsafe fn to_corner(hwnd: HWND) {
         let mut r = RECT { left: 0, top: 0, right: 0, bottom: 0 };
         GetWindowRect(hwnd, &mut r);
         let (x, y) = corner(r.right - r.left, r.bottom - r.top);
         SetWindowPos(hwnd, null_mut(), x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+        clear_setting("position");
+    }
+
+    /// Where the user last dragged the kitten (`position=x,y`), while that spot is still on a display.
+    fn saved_position(w: i32, h: i32) -> Option<(i32, i32)> {
+        let v = setting("position")?;
+        let (x, y) = v.split_once(',')?;
+        let (x, y) = (x.trim().parse::<i32>().ok()?, y.trim().parse::<i32>().ok()?);
+        let (cx, cy) = (x + w / 2, y + h / 2);
+        monitors().iter().any(|m| cx >= m.work.left && cx < m.work.right && cy >= m.work.top && cy < m.work.bottom).then_some((x, y))
     }
 
     fn with_app(f: impl FnOnce(&mut App)) {
@@ -425,9 +582,21 @@ mod win {
             let check = if Some(i) == current { MF_CHECKED } else { MF_UNCHECKED };
             AppendMenuW(sub, MF_STRING | check, MENU_MONITOR + i, label.as_ptr());
         }
-        let (a, s, b) = (wide("Back to corner"), wide("Monitor"), wide("Quit"));
+        let coats = CreatePopupMenu();
+        let worn = APP.with(|a| a.try_borrow().ok().and_then(|g| g.as_ref().map(|app| app.scene.coat.name))).unwrap_or(scene::COATS[0].name);
+        for (i, c) in scene::COATS.iter().enumerate() {
+            let label = wide(c.name);
+            let check = if c.name == worn { MF_CHECKED } else { MF_UNCHECKED };
+            // two columns, so the list fits on a laptop screen
+            let column = if i == scene::COATS.len().div_ceil(2) { MF_MENUBARBREAK } else { 0 };
+            AppendMenuW(coats, MF_STRING | check | column, MENU_COAT + i, label.as_ptr());
+        }
+        let (a, s, col, top, b) = (wide("Back to corner"), wide("Monitor"), wide("Color"), wide("Always on top"), wide("Quit"));
+        let on_top = topmost();
         AppendMenuW(m, MF_STRING, MENU_CORNER, a.as_ptr());
         AppendMenuW(m, MF_STRING | MF_POPUP, sub as usize, s.as_ptr());
+        AppendMenuW(m, MF_STRING | MF_POPUP, coats as usize, col.as_ptr());
+        AppendMenuW(m, MF_STRING | if on_top { MF_CHECKED } else { MF_UNCHECKED }, MENU_TOPMOST, top.as_ptr());
         AppendMenuW(m, MF_SEPARATOR, 0, null());
         AppendMenuW(m, MF_STRING, MENU_QUIT, b.as_ptr());
         let mut pt = POINT { x: 0, y: 0 };
@@ -437,8 +606,24 @@ mod win {
         DestroyMenu(m); // also destroys the submenu
         match cmd {
             MENU_CORNER => to_corner(hwnd),
+            MENU_TOPMOST => {
+                save_setting("always_on_top", if on_top { "0" } else { "1" });
+                apply_topmost(hwnd, !on_top);
+            }
             MENU_QUIT => {
                 DestroyWindow(hwnd);
+            }
+            c if c >= MENU_COAT && c - MENU_COAT < scene::COATS.len() => {
+                let coat = scene::COATS[c - MENU_COAT];
+                // a fresh roll of where the patches sit, kept until the next pick
+                let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |d| d.subsec_nanos() ^ d.as_secs() as u32) | 1;
+                save_setting("coat", coat.name);
+                save_setting("coat_seed", &seed.to_string());
+                with_app(|a| {
+                    a.scene.coat = coat;
+                    a.scene.patch_seed = seed;
+                    a.frame();
+                });
             }
             c if c >= MENU_MONITOR && c - MENU_MONITOR < list.len() => {
                 let device = list[c - MENU_MONITOR].device.clone();
@@ -463,8 +648,23 @@ mod win {
                 show_menu(hwnd);
                 0
             }
+            // a drag ended: open here next time
+            WM_EXITSIZEMOVE => {
+                let mut r = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                GetWindowRect(hwnd, &mut r);
+                save_setting("position", &format!("{},{}", r.left, r.top));
+                0
+            }
             WM_TIMER => {
                 with_app(|a| if wp == FRAME { a.frame() } else { a.poll() });
+                0
+            }
+            WM_UPDATE_READY => {
+                apply_update(hwnd);
+                0
+            }
+            WM_UPDATE_CHECK => {
+                start_update_checks(hwnd, false);
                 0
             }
             WM_DESTROY => {
@@ -475,6 +675,81 @@ mod win {
         }
     }
 
+    /// A staged update is ready (posted by the update thread): swap the exe, let go of the
+    /// one-kitten mutex and start the new exe with the same arguments, then close.
+    const WM_UPDATE_READY: u32 = WM_APP + 1;
+    /// `kitten-assistant update` asks the running kitten to check now.
+    const WM_UPDATE_CHECK: u32 = WM_APP + 2;
+    static MUTEX: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+    /// Release builds only; off with `auto_update=0` in kitten-assistant.ini.
+    fn auto_update() -> bool {
+        update::RELEASE_BUILD && setting("auto_update").map_or(true, |v| v != "0")
+    }
+
+    /// Checks on a background thread: once now (`repeat` false), or 30 s after start and then
+    /// every 6 hours; posts WM_UPDATE_READY once a newer release is downloaded and verified.
+    fn start_update_checks(hwnd: HWND, repeat: bool) {
+        let at = hwnd as usize;
+        let _ = std::thread::Builder::new().name("update".into()).spawn(move || {
+            if repeat {
+                std::thread::sleep(std::time::Duration::from_secs(30));
+            }
+            loop {
+                match update::check_and_stage() {
+                    Ok(Some(tag)) => {
+                        log(&format!("update {tag} downloaded and verified (running {})", update::label()));
+                        unsafe { PostMessageW(at as HWND, WM_UPDATE_READY, 0, 0) };
+                        return;
+                    }
+                    Ok(None) => {}
+                    Err(e) => log(&format!("update check: {e}")),
+                }
+                if !repeat {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_secs(6 * 3600));
+            }
+        });
+    }
+
+    fn apply_update(hwnd: HWND) {
+        if let Err(e) = update::swap_in() {
+            log(&format!("update: {e}"));
+            return;
+        }
+        let Ok(exe) = std::env::current_exe() else { return };
+        unsafe { CloseHandle(MUTEX.swap(0, std::sync::atomic::Ordering::SeqCst) as HANDLE) };
+        match std::process::Command::new(&exe).args(std::env::args_os().skip(1)).spawn() {
+            Ok(_) => unsafe {
+                DestroyWindow(hwnd);
+            },
+            Err(e) => log(&format!("update: could not start the new exe: {e}")),
+        }
+    }
+
+    /// `kitten-assistant update`: the running kitten checks now; with none running, update the exe here.
+    pub fn update_now() -> Result<(), String> {
+        if !update::RELEASE_BUILD {
+            message(&format!("This is a development build ({}): only release builds update themselves.", update::label()));
+            return Ok(());
+        }
+        let c = wide(CLASS);
+        let h = unsafe { FindWindowW(c.as_ptr(), null()) };
+        if !h.is_null() {
+            unsafe { PostMessageW(h, WM_UPDATE_CHECK, 0, 0) };
+            return Ok(());
+        }
+        match update::check_and_stage()? {
+            Some(tag) => {
+                update::swap_in()?;
+                message(&format!("Updated to {tag}."));
+            }
+            None => message(&format!("Kitten Assistant {} is up to date.", update::label())),
+        }
+        Ok(())
+    }
+
     pub fn run(o: &Opts, status: PathBuf) -> Result<(), String> {
         unsafe {
             let name = wide("Local\\KittenAssistant");
@@ -482,6 +757,17 @@ mod win {
             if GetLastError() == ERROR_ALREADY_EXISTS {
                 return Ok(()); // one kitten is enough
             }
+            MUTEX.store(mutex as usize, std::sync::atomic::Ordering::SeqCst);
+            update::clean_up();
+            // Never compete with real work: the lowest scheduling priority, and Windows'
+            // efficiency mode (EcoQoS: efficient cores, low clocks) for its few milliseconds a frame.
+            SetPriorityClass(GetCurrentProcess(), IDLE_PRIORITY_CLASS);
+            let eco = PROCESS_POWER_THROTTLING_STATE {
+                Version: PROCESS_POWER_THROTTLING_CURRENT_VERSION,
+                ControlMask: PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
+                StateMask: PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
+            };
+            SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &eco as *const _ as *const c_void, std::mem::size_of::<PROCESS_POWER_THROTTLING_STATE>() as u32);
             SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
             let sc = o.scale.unwrap_or_else(|| GetDpiForSystem() as f32 / 96.0).clamp(0.25, 8.0);
             let (w, h) = ((scene::W * sc).ceil() as i32, (scene::H * sc).ceil() as i32);
@@ -515,11 +801,14 @@ mod win {
                 None => setting("monitor").unwrap_or_default(),
             };
             HOME.with(|h| *h.borrow_mut() = home);
-            let (cx, cy) = corner(w, h);
+            if o.monitor.is_some() {
+                clear_setting("position");
+            }
+            let (cx, cy) = saved_position(w, h).unwrap_or_else(|| corner(w, h));
             let (x, y) = (o.x.unwrap_or(cx), o.y.unwrap_or(cy));
             let title = wide("Kitten Assistant");
             let hwnd = CreateWindowExW(
-                WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST,
+                WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | if topmost() { WS_EX_TOPMOST } else { 0 },
                 class.as_ptr(),
                 title.as_ptr(),
                 WS_POPUP,
@@ -554,9 +843,12 @@ mod win {
             }
             let old = SelectObject(mem_dc, dib as HGDIOBJ);
 
+            let mut scene = scene::Scene::new();
+            scene.coat = scene::Coat::named(&setting("coat").unwrap_or_default());
+            scene.patch_seed = setting("coat_seed").and_then(|v| v.parse().ok()).unwrap_or(1);
             let mut app = App {
                 hwnd,
-                scene: scene::Scene::new(),
+                scene,
                 pix: Pixmap::new(w as u32, h as u32).ok_or("pixmap")?,
                 sc,
                 start: Instant::now(),
@@ -567,12 +859,17 @@ mod win {
                 bits: bits as *mut u8,
                 frame_ms: 0,
                 first_poll: true,
+                last_frame: Vec::new(),
+                last_status: String::new(),
             };
             app.poll();
             app.frame();
             APP.with(|a| *a.borrow_mut() = Some(app));
             ShowWindow(hwnd, SW_SHOWNOACTIVATE);
             SetTimer(hwnd, POLL, 2000, None);
+            if auto_update() {
+                start_update_checks(hwnd, true);
+            }
 
             let mut msg: MSG = std::mem::zeroed();
             while GetMessageW(&mut msg, null_mut(), 0, 0) > 0 {
@@ -580,7 +877,10 @@ mod win {
                 DispatchMessageW(&msg);
             }
             APP.with(|a| *a.borrow_mut() = None);
-            CloseHandle(mutex);
+            let m = MUTEX.swap(0, std::sync::atomic::Ordering::SeqCst);
+            if m != 0 {
+                CloseHandle(m as HANDLE);
+            }
         }
         Ok(())
     }

@@ -12,16 +12,144 @@ use crate::canvas::*;
 pub const W: f32 = 300.0;
 pub const H: f32 = 250.0;
 
-const CX: f32 = 105.0; // kitten centre line
+const CX: f32 = 105.0; // kitten center line
+
+/// A kitten's colors (right-click > Color; `coat=` in kitten-assistant.ini).
+#[derive(Clone, Copy)]
+pub struct Coat {
+    pub name: &'static str,
+    pub fur: Rgba,
+    /// tabby stripes and the tail tip
+    pub dark: Rgba,
+    /// muzzle and tummy
+    pub cream: Rgba,
+    /// inner ears and nose
+    pub pink: Rgba,
+    pub eye: Rgba,
+    pub stripes: bool,
+    /// a patch over one ear and the forehead, one on the tummy side (calico, cow, tortie)
+    pub patch: Option<Rgba>,
+    /// patches alternate the patch color and `dark` (calico)
+    pub tri: bool,
+    /// the special coats' markings
+    pub marks: Marks,
+}
+
+/// Markings drawn on the head and tummy sides (and the tail, for the rainbow).
+#[derive(Clone, Copy)]
+pub enum Marks {
+    Plain,
+    /// rainbow stripes and a rainbow-banded tail
+    Rainbow,
+    /// nebula glows and little stars
+    Galaxy,
+    Dots(Rgba),
+    Hearts(Rgba),
+    /// white clouds
+    Clouds,
+    /// seed dots and a leafy top
+    Strawberry,
+    /// a soft glow on the cheeks and tummy sides
+    Blush(Rgba),
+    /// see-through fur
+    Ghost,
+}
+
+const RAINBOW: [Rgba; 6] = [
+    Rgba::rgb(240, 84, 84),
+    Rgba::rgb(250, 156, 60),
+    Rgba::rgb(250, 214, 70),
+    Rgba::rgb(110, 200, 110),
+    Rgba::rgb(90, 156, 236),
+    Rgba::rgb(160, 110, 220),
+];
+
+/// The galaxy coat's stars: (x, y, size) in -1..1 of the area's radii; size above 1.5 twinkles as a cross.
+const HEAD_STARS: [(f32, f32, f32); 9] =
+    [(-0.62, -0.55, 2.4), (-0.25, -0.85, 1.0), (0.18, -0.7, 1.6), (0.55, -0.45, 2.6), (0.78, -0.05, 1.0), (-0.82, 0.05, 1.2), (0.35, -0.1, 0.8), (-0.4, -0.25, 0.9), (0.05, -0.35, 2.0)];
+const BODY_STARS: [(f32, f32, f32); 6] = [(-0.75, -0.3, 1.8), (-0.6, 0.35, 1.0), (0.7, -0.45, 1.0), (0.75, 0.2, 2.2), (-0.8, 0.0, 0.8), (0.6, 0.6, 1.2)];
+
+const fn coat(name: &'static str, fur: (u8, u8, u8), dark: (u8, u8, u8), cream: (u8, u8, u8), stripes: bool) -> Coat {
+    Coat {
+        name,
+        fur: Rgba::rgb(fur.0, fur.1, fur.2),
+        dark: Rgba::rgb(dark.0, dark.1, dark.2),
+        cream: Rgba::rgb(cream.0, cream.1, cream.2),
+        pink: Rgba::rgb(255, 170, 186),
+        eye: Rgba::rgb(50, 34, 36),
+        stripes,
+        patch: None,
+        tri: false,
+        marks: Marks::Plain,
+    }
+}
+
+const fn with_marks(c: Coat, marks: Marks) -> Coat {
+    Coat { marks, ..c }
+}
+
+const fn rgb(c: (u8, u8, u8)) -> Rgba {
+    Rgba::rgb(c.0, c.1, c.2)
+}
+
+const fn with_patch(c: Coat, patch: (u8, u8, u8)) -> Coat {
+    Coat { patch: Some(Rgba::rgb(patch.0, patch.1, patch.2)), ..c }
+}
+
+const fn with_pink(c: Coat, pink: (u8, u8, u8)) -> Coat {
+    Coat { pink: Rgba::rgb(pink.0, pink.1, pink.2), ..c }
+}
+
+const fn with_eye(c: Coat, eye: (u8, u8, u8)) -> Coat {
+    Coat { eye: Rgba::rgb(eye.0, eye.1, eye.2), ..c }
+}
+
+/// Every coat, the default first. The menu lists them in this order.
+pub const COATS: [Coat; 32] = [
+    coat("Orange tabby", (247, 178, 102), (224, 136, 70), (255, 238, 216), true),
+    coat("Ginger", (238, 140, 60), (198, 96, 38), (255, 226, 196), true),
+    coat("Cream tabby", (250, 222, 170), (226, 186, 126), (255, 246, 230), true),
+    coat("Gray tabby", (168, 170, 180), (116, 118, 132), (236, 236, 242), true),
+    coat("Silver tabby", (210, 214, 222), (140, 146, 162), (248, 248, 252), true),
+    coat("Brown tabby", (178, 126, 84), (118, 78, 48), (236, 214, 190), true),
+    coat("Golden", (240, 196, 92), (208, 152, 52), (255, 240, 200), true),
+    with_eye(with_pink(coat("Black", (58, 55, 64), (40, 38, 46), (68, 65, 75), false), (210, 128, 148)), (226, 184, 72)),
+    coat("White", (250, 248, 245), (222, 218, 214), (255, 255, 255), false),
+    with_eye(with_pink(coat("Tuxedo", (66, 62, 72), (40, 38, 46), (250, 248, 245), false), (220, 136, 156)), (226, 184, 72)),
+    coat("Russian blue", (140, 154, 178), (106, 118, 146), (196, 206, 224), false),
+    coat("Chocolate", (132, 86, 60), (96, 60, 40), (212, 182, 158), false),
+    coat("Cinnamon", (198, 122, 82), (156, 86, 54), (240, 210, 186), false),
+    coat("Lilac", (198, 182, 198), (160, 142, 164), (242, 234, 242), false),
+    coat("Fawn", (226, 196, 164), (196, 160, 124), (250, 238, 224), false),
+    coat("Seal point", (238, 222, 200), (102, 74, 60), (250, 242, 230), false),
+    with_eye(coat("Blue point", (236, 234, 238), (132, 142, 166), (250, 250, 252), false), (40, 64, 110)),
+    Coat { tri: true, ..with_patch(coat("Calico", (250, 246, 240), (60, 54, 58), (255, 255, 255), false), (236, 146, 66)) },
+    with_eye(with_patch(coat("Tortoiseshell", (74, 58, 54), (48, 38, 36), (120, 96, 84), false), (214, 128, 60)), (226, 184, 72)),
+    with_patch(coat("Cow cat", (250, 248, 245), (52, 50, 56), (255, 255, 255), false), (52, 50, 56)),
+    Coat { tri: true, ..with_patch(coat("Dilute calico", (246, 242, 238), (150, 150, 166), (255, 255, 255), false), (240, 200, 160)) },
+    with_marks(coat("Cotton candy", (255, 190, 216), (240, 140, 186), (196, 226, 255), false), Marks::Hearts(rgb((255, 255, 255)))),
+    with_marks(coat("Lavender", (200, 176, 240), (156, 128, 208), (242, 234, 252), true), Marks::Dots(rgb((255, 255, 255)))),
+    with_marks(coat("Mint chip", (178, 234, 208), (120, 196, 162), (236, 252, 244), false), Marks::Dots(rgb((104, 70, 52)))),
+    with_marks(coat("Sky", (140, 198, 246), (96, 160, 220), (236, 246, 255), false), Marks::Clouds),
+    with_marks(coat("Lemon", (252, 230, 110), (232, 196, 52), (255, 250, 222), true), Marks::Dots(rgb((255, 250, 214)))),
+    with_marks(coat("Peach", (255, 204, 172), (242, 160, 126), (255, 240, 228), false), Marks::Blush(Rgba(255, 140, 120, 90))),
+    with_marks(with_pink(coat("Strawberry", (236, 76, 92), (196, 48, 64), (255, 214, 220), false), (255, 200, 210)), Marks::Strawberry),
+    with_marks(coat("Grape", (148, 98, 192), (108, 64, 150), (226, 208, 244), false), Marks::Dots(rgb((214, 186, 248)))),
+    with_marks(with_pink(with_eye(coat("Galaxy", (38, 36, 86), (24, 22, 62), (70, 62, 140), false), (240, 210, 110)), (200, 150, 236)), Marks::Galaxy),
+    with_marks(Coat { fur: Rgba(236, 242, 255, 212), cream: Rgba(255, 255, 255, 224), ..with_eye(coat("Ghost", (236, 242, 255), (200, 210, 236), (255, 255, 255), false), (80, 110, 190)) }, Marks::Ghost),
+    with_marks(coat("Rainbow", (255, 246, 240), (236, 110, 140), (255, 255, 255), false), Marks::Rainbow),
+];
+
+impl Coat {
+    /// The coat called `name` (any case), else the default.
+    pub fn named(name: &str) -> Coat {
+        COATS.iter().find(|c| c.name.eq_ignore_ascii_case(name.trim())).copied().unwrap_or(COATS[0])
+    }
+}
 
 // palette
-const FUR: Rgba = Rgba::rgb(247, 178, 102);
-const FUR_DARK: Rgba = Rgba::rgb(224, 136, 70);
-const CREAM: Rgba = Rgba::rgb(255, 238, 216);
-const PINK: Rgba = Rgba::rgb(255, 170, 186);
 const PINK_DARK: Rgba = Rgba::rgb(226, 112, 134);
 const BLUSH: Rgba = Rgba(255, 128, 150, 95);
-const EYE: Rgba = Rgba::rgb(50, 34, 36);
 const WHITE: Rgba = Rgba::rgb(255, 255, 255);
 const WOOD_TOP: Rgba = Rgba::rgb(216, 162, 110);
 const WOOD_FRONT: Rgba = Rgba::rgb(178, 120, 78);
@@ -95,6 +223,46 @@ impl Mood {
 /// Typing screens: scrolling code, progress bars, equalizer, gear, line graph.
 const SCREENS: usize = 5;
 
+/// Seconds a coffee sip takes.
+const SIP_SECS: f64 = 2.4;
+/// Center of the mug on the desk.
+const MUG_HOME: (f32, f32) = (179.0, 200.0);
+
+/// A light muzzle / tummy over patches: solid in the middle with a soft edge (`grow` 1.0 keeps the
+/// soft edge inside the given oval), so the patches around it fade into it.
+fn soft_cream(c: &mut Canvas, x: f32, y: f32, w: f32, h: f32, col: Rgba, grow: f32) {
+    let (cx, cy) = (x + w / 2.0, y + h / 2.0);
+    let rings = [(1.0, 0.22), (0.96, 0.32), (0.92, 0.45), (0.88, 0.65), (0.84, 1.0)];
+    for (k, a) in rings.map(|(k, a)| (k * grow, a)) {
+        c.fill(&oval(cx - w * k / 2.0, cy - h * k / 2.0, w * k, h * k), col.fade(a));
+    }
+}
+
+fn smooth(x: f32) -> f32 {
+    let x = x.clamp(0.0, 1.0);
+    x * x * (3.0 - 2.0 * x)
+}
+
+/// Mug center `p` (0..1) of the way through a sip: on the desk, up to the mouth, a sip, back down.
+fn mug_at(p: f32, hy: f32) -> (f32, f32) {
+    let a = if p < 0.15 {
+        0.0
+    } else if p < 0.35 {
+        (p - 0.15) / 0.2
+    } else if p < 0.68 {
+        1.0
+    } else if p < 0.88 {
+        1.0 - (p - 0.68) / 0.2
+    } else {
+        0.0
+    };
+    // straight up first, then across to the mouth, so the mug clears the keyboard's corner
+    let up = smooth(a / 0.55);
+    let across = smooth((a - 0.35) / 0.65);
+    let mouth = (CX + 14.0, hy + 19.0);
+    (MUG_HOME.0 + (mouth.0 - MUG_HOME.0) * across, MUG_HOME.1 + (mouth.1 - MUG_HOME.1) * up)
+}
+
 /// Seconds the "all done!" moment lasts after busy turns idle.
 const CHEER_SECS: f64 = 2.5;
 
@@ -114,6 +282,10 @@ pub struct Pose {
     droop: f32,
     /// 0 = eyes wide open, 1 = lids all the way down
     lid: f32,
+    /// 0..1 through a coffee sip, None outside one
+    sip: Option<f32>,
+    /// where the mug's center is
+    mug: (f32, f32),
 }
 
 #[derive(Clone, Copy)]
@@ -125,6 +297,9 @@ struct Paw {
 }
 
 pub struct Scene {
+    pub coat: Coat,
+    /// rolls where the patches sit and how they look (a new one on every color pick)
+    pub patch_seed: u32,
     pub busy: bool,
     pub task: String,
     pub mood: Mood,
@@ -137,6 +312,9 @@ pub struct Scene {
     rng: u64,
     next_blink: f64,
     next_twitch: f64,
+    /// when the next coffee sip starts, and when the current one started
+    pub next_sip: f64,
+    pub sip_start: f64,
     twitch_start: f64,
     twitch_ear: f32,
     lpx: f32,
@@ -166,6 +344,10 @@ impl Scene {
             rng: 0x2545_F491_4F6C_DD1D,
             next_blink: 2.0,
             next_twitch: 4.0,
+            next_sip: 10.0,
+            coat: COATS[0],
+            patch_seed: 1,
+            sip_start: -100.0,
             twitch_start: -10.0,
             twitch_ear: 1.0,
             lpx: -1.0,
@@ -282,6 +464,18 @@ impl Scene {
             l = Paw { x: CX - 29.0, lift: 0.0, key: None, down: false };
             r = Paw { x: CX + 9.0, lift: 0.0, key: None, down: false };
         }
+        // a rare sip of coffee: a short break, then straight back to the mood
+        if busy && t > self.next_sip {
+            self.sip_start = t;
+            self.next_sip = t + 15.0 + self.rand() * 20.0;
+        }
+        let sp = ((t - self.sip_start) / SIP_SECS) as f32;
+        let sip = (busy && (0.0..1.0).contains(&sp)).then_some(sp);
+        let mug = sip.map_or(MUG_HOME, |p| mug_at(p, hy));
+        if sip.is_some() && typing {
+            // the typing paw rests while the other one holds the mug
+            l = Paw { x: CX - 29.0, lift: 0.0, key: None, down: false };
+        }
         if self.lpx < 0.0 {
             self.lpx = l.x;
             self.rpx = r.x;
@@ -295,12 +489,23 @@ impl Scene {
         }
         l.x = self.lpx;
         r.x = self.rpx;
-        l.down = typing && l.lift < 1.0;
-        r.down = typing && r.lift < 1.0;
+        if let Some(p) = sip {
+            // reach for the mug, hold it while it travels, let go and come back
+            let w = smooth(if p < 0.15 { p / 0.15 } else if p > 0.88 { (1.0 - p) / 0.12 } else { 1.0 });
+            let (gx, gy) = (mug.0 - PAW_W / 2.0 + 2.0, mug.1 + 3.0);
+            let py = 181.0 + (gy - 181.0) * w;
+            r = Paw { x: r.x + (gx - r.x) * w, lift: 181.0 - py, key: None, down: false };
+            self.rpx = r.x;
+        }
+        l.down = typing && sip.is_none() && l.lift < 1.0;
+        r.down = typing && sip.is_none() && r.lift < 1.0;
 
         // looks at the screen while typing and glances back at you every so often;
         // while waiting it looks off to the side now and then
-        let look = if typing && (t % 9.0) > 1.3 {
+        let drinking = sip.is_some_and(|p| (0.38..0.66).contains(&p));
+        let look = if sip.is_some() {
+            0.0
+        } else if typing && (t % 9.0) > 1.3 {
             2.5
         } else if waiting && (t % 5.0) > 3.4 {
             // a glance over at the hourglass
@@ -315,7 +520,7 @@ impl Scene {
             hy,
             sway,
             // asleep, or squeezed shut with joy while cheering
-            eyes_closed: !busy || blink,
+            eyes_closed: !busy || blink || drinking,
             look,
             twitch,
             twitch_ear: self.twitch_ear,
@@ -323,7 +528,9 @@ impl Scene {
             r,
             cheer,
             droop: if problem { 1.0 } else { 0.0 },
-            lid,
+            lid: if drinking { 0.0 } else { lid },
+            sip,
+            mug,
         }
     }
 
@@ -335,7 +542,9 @@ impl Scene {
         self.computer(&mut c, tf, p);
         self.body(&mut c, p);
         self.desk(&mut c);
-        self.mug(&mut c, tf);
+        if p.sip.is_none() {
+            self.mug(&mut c, tf, MUG_HOME);
+        }
         self.keyboard(&mut c, p);
         self.arms(&mut c, p);
         self.head(&mut c, p);
@@ -345,12 +554,21 @@ impl Scene {
             let (px, py) = (CX - 33.0, p.hy + 12.0);
             let arm = line(CX - 38.0, KY + 4.0, px + 8.0, py + 9.0);
             c.stroke(&arm, INK, 14.5);
-            c.stroke(&arm, FUR, 10.5);
-            c.blob(&oval(px, py, 18.0, 15.0), FUR);
+            c.stroke(&arm, self.coat.fur, 10.5);
+            c.blob(&oval(px, py, 18.0, 15.0), self.coat.fur);
             // toes curl in towards the face
             for (dx, dy) in [(12.5, 3.5), (14.5, 7.0), (13.5, 10.5)] {
                 c.stroke(&line(px + dx, py + dy, px + dx + 3.5, py + dy), INK.fade(0.8), 1.1);
             }
+        }
+        if p.sip.is_some() {
+            // the arm, paw and mug in front of the head; the paw holds the mug from below
+            let py = 181.0 - p.r.lift;
+            let arm = line(CX + 24.0, p.hy + 46.0, p.r.x + PAW_W / 2.0, py + 5.0);
+            c.stroke(&arm, INK, 14.5);
+            c.stroke(&arm, self.coat.fur, 10.5);
+            c.blob(&oval(p.r.x, py, PAW_W, 13.0), self.coat.fur);
+            self.mug(&mut c, tf, p.mug);
         }
         self.sparkles(&mut c, p);
         if let Some(k) = p.cheer {
@@ -447,10 +665,18 @@ impl Scene {
         let line: Vec<(f32, f32)> = (0..=24).map(|i| bezier(pts, i as f32 / 24.0)).collect();
         let path = polyline(&line);
         c.stroke(&path, INK, 13.0);
-        c.stroke(&path, FUR, 9.0);
-        // darker tip
-        let tip = polyline(&line[19..]);
-        c.stroke(&tip, FUR_DARK, 9.0);
+        c.stroke(&path, self.coat.fur, 9.0);
+        if matches!(self.coat.marks, Marks::Rainbow) {
+            // bands along the tail, red at the tip
+            for (i, col) in RAINBOW.iter().enumerate() {
+                let from = 24 - (i + 1) * 4;
+                c.stroke(&polyline(&line[from..=from + 4]), *col, 9.0);
+            }
+        } else {
+            // darker tip
+            let tip = polyline(&line[19..]);
+            c.stroke(&tip, self.coat.dark, 9.0);
+        }
     }
 
     fn computer(&self, c: &mut Canvas, t: f32, p: &Pose) {
@@ -575,8 +801,138 @@ impl Scene {
     fn body(&self, c: &mut Canvas, p: &Pose) {
         let top = p.hy + 22.0;
         let h = 224.0 - top;
-        c.blob(&oval(CX - 40.0, top, 80.0, h), FUR);
-        c.fill(&oval(CX - 22.0, top + 14.0, 44.0, h - 12.0), CREAM);
+        c.blob(&oval(CX - 40.0, top, 80.0, h), self.coat.fur);
+        // patches run over the tummy (drawn first), markings sit beside it
+        let tummy = oval(CX - 22.0, top + 14.0, 44.0, h - 12.0);
+        let patched = self.coat.patch.is_some();
+        if patched {
+            c.fill(&tummy, self.coat.cream);
+        }
+        if self.coat.patch.is_some() {
+            let body = oval(CX - 40.0, top, 80.0, h);
+            c.clip(Some(&body));
+            for (shape, col) in self.patches(CX, top + h * 0.5, 40.0, h * 0.5, 1, 2, 7) {
+                self.soft_patch(c, &shape, col);
+            }
+            c.clip(None);
+            c.stroke(&body, INK, OUTLINE);
+        }
+        self.marks_on(c, CX, top + h * 0.5, 36.0, h * 0.45, &BODY_STARS);
+        if patched {
+            // the patches show through the tummy, lighter
+            soft_cream(c, CX - 22.0, top + 14.0, 44.0, h - 12.0, self.coat.cream, 1.0);
+        } else {
+            c.fill(&tummy, self.coat.cream);
+        }
+    }
+
+    /// One patch with a soft edge: lighter bands just outside its outline, so it melts into the fur
+    fn soft_patch(&self, c: &mut Canvas, shape: &[(f32, f32)], col: Rgba) {
+        let n = shape.len() as f32;
+        let (mx, my) = shape.iter().fold((0.0, 0.0), |(x, y), p| (x + p.0 / n, y + p.1 / n));
+        for (k, a) in [(1.1, 0.35), (1.05, 0.5), (1.0, 1.0)] {
+            let ring: Vec<(f32, f32)> = shape.iter().map(|p| (mx + (p.0 - mx) * k, my + (p.1 - my) * k)).collect();
+            c.fill(&poly(&ring), col.fade(a));
+        }
+    }
+
+    /// The coat's patches inside the ellipse at (`cx`, `cy`) with radii `rx`, `ry`: `min`..=`max`
+    /// lumpy blobs placed, sized, stretched and turned from `patch_seed` (`salt` keeps the head
+    /// and the body apart), each point kept just inside the ellipse so none spills past the outline.
+    fn patches(&self, cx: f32, cy: f32, rx: f32, ry: f32, min: u32, max: u32, salt: u32) -> Vec<(Vec<(f32, f32)>, Rgba)> {
+        let Some(main) = self.coat.patch else { return Vec::new() };
+        let mut state = self.patch_seed.wrapping_mul(0x9E37_79B9) ^ salt.wrapping_mul(0x85EB_CA6B) | 1;
+        let mut rnd = move || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            (state >> 8) as f32 / (1u32 << 24) as f32
+        };
+        let n = min + (rnd() * (max - min + 1) as f32) as u32;
+        (0..n)
+            .map(|i| {
+                let (px, py) = (cx + (rnd() * 1.4 - 0.7) * rx, cy + (rnd() * 1.4 - 0.7) * ry);
+                let (a, b) = (rx * (0.22 + rnd() * 0.3), ry * (0.22 + rnd() * 0.3));
+                let turn = rnd() * PI;
+                let (w1, w2, k1, k2) = (rnd() * 0.12, rnd() * 0.06, 2.0 + (rnd() * 3.0).floor(), 4.0 + (rnd() * 3.0).floor());
+                let ph = rnd() * 6.28;
+                let shape = (0..36)
+                    .map(|j| {
+                        let t = j as f32 / 36.0 * 2.0 * PI;
+                        let lump = 1.0 + w1 * (k1 * t + ph).sin() + w2 * (k2 * t - ph).cos();
+                        let (ex, ey) = (a * lump * t.cos(), b * lump * t.sin());
+                        let (mut x, mut y) = (px + ex * turn.cos() - ey * turn.sin(), py + ex * turn.sin() + ey * turn.cos());
+                        let r = ((x - cx) / rx).powi(2) + ((y - cy) / ry).powi(2);
+                        if r > 1.08 * 1.08 {
+                            let s = 1.08 / r.sqrt();
+                            (x, y) = (cx + (x - cx) * s, cy + (y - cy) * s);
+                        }
+                        (x, y)
+                    })
+                    .collect();
+                let col = if self.coat.tri && i % 2 == 1 { self.coat.dark } else { main };
+                (shape, col)
+            })
+            .collect()
+    }
+
+    /// The coat's markings inside the ellipse at (`cx`, `cy`) with radii `rx`, `ry`; `spots` are
+    /// (x, y, size) in -1..1 of the radii.
+    fn marks_on(&self, c: &mut Canvas, cx: f32, cy: f32, rx: f32, ry: f32, spots: &[(f32, f32, f32)]) {
+        let at = |x: f32, y: f32| (cx + x * rx, cy + y * ry);
+        match self.coat.marks {
+            Marks::Galaxy => self.starry(c, cx, cy, rx, ry, spots),
+            Marks::Dots(col) => {
+                for &(x, y, s) in spots {
+                    let (px, py) = at(x, y);
+                    c.fill(&circle(px, py, 1.6 + s * 0.7), col);
+                }
+            }
+            Marks::Hearts(col) => {
+                for &(x, y, s) in spots.iter().filter(|s| s.2 >= 1.0) {
+                    let (px, py) = at(x, y);
+                    let r = 1.4 + s * 0.45;
+                    c.fill(&circle(px - r * 0.7, py, r), col);
+                    c.fill(&circle(px + r * 0.7, py, r), col);
+                    c.fill(&poly(&[(px - r * 1.6, py + r * 0.3), (px + r * 1.6, py + r * 0.3), (px, py + r * 2.4)]), col);
+                }
+            }
+            Marks::Clouds => {
+                for &(x, y, s) in spots.iter().filter(|s| s.2 >= 1.6) {
+                    let (px, py) = at(x, y);
+                    let r = 2.6 + s;
+                    for (dx, dy, k) in [(-1.0f32, 0.3f32, 0.8f32), (0.0, -0.2, 1.0), (1.0, 0.3, 0.8)] {
+                        c.fill(&circle(px + dx * r, py + dy * r, r * k), Rgba(255, 255, 255, 235));
+                    }
+                }
+            }
+            Marks::Strawberry => {
+                for &(x, y, s) in spots {
+                    let (px, py) = at(x, y);
+                    c.fill(&oval(px - 1.1, py - 1.7, 2.2, 3.4 + s * 0.3), Rgba(255, 226, 120, 255));
+                }
+            }
+            Marks::Blush(col) => {
+                c.fill(&oval(cx - rx * 0.95, cy + ry * 0.05, rx * 0.7, ry * 0.75), col);
+                c.fill(&oval(cx + rx * 0.25, cy + ry * 0.05, rx * 0.7, ry * 0.75), col);
+            }
+            Marks::Plain | Marks::Rainbow | Marks::Ghost => {}
+        }
+    }
+
+    /// Nebula glows and stars inside the ellipse at (`cx`, `cy`) with radii `rx`, `ry`; `stars` are
+    /// (x, y, size) in -1..1 of the radii.
+    fn starry(&self, c: &mut Canvas, cx: f32, cy: f32, rx: f32, ry: f32, stars: &[(f32, f32, f32)]) {
+        c.fill(&oval(cx - rx * 0.9, cy - ry * 0.7, rx * 1.1, ry * 0.9), Rgba(150, 90, 220, 70));
+        c.fill(&oval(cx + rx * 0.05, cy - ry * 0.1, rx * 0.8, ry * 0.75), Rgba(236, 110, 190, 45));
+        for &(x, y, s) in stars {
+            let (sx, sy) = (cx + x * rx, cy + y * ry);
+            if s > 1.5 {
+                c.stroke(&line(sx - s, sy, sx + s, sy), Rgba(255, 244, 200, 230), 1.1);
+                c.stroke(&line(sx, sy - s, sx, sy + s), Rgba(255, 244, 200, 230), 1.1);
+            }
+            c.fill(&circle(sx, sy, 0.7 + s * 0.25), Rgba(255, 255, 255, 220));
+        }
     }
 
     fn desk(&self, c: &mut Canvas) {
@@ -588,14 +944,16 @@ impl Scene {
         c.stroke(&line(240.0, 212.0, 276.0, 212.0), WOOD_FRONT.fade(0.5), 1.0);
     }
 
-    fn mug(&self, c: &mut Canvas, t: f32) {
-        let handle = oval(181.0, 197.0, 8.0, 8.0);
+    fn mug(&self, c: &mut Canvas, t: f32, at: (f32, f32)) {
+        let (dx, dy) = (at.0 - MUG_HOME.0, at.1 - MUG_HOME.1);
+        let handle = oval(181.0 + dx, 197.0 + dy, 8.0, 8.0);
         c.stroke(&handle, INK, 4.6);
         c.stroke(&handle, MUG, 2.2);
-        c.blob(&rrect(173.0, 193.0, 12.0, 15.0, 3.0), MUG);
-        c.fill(&oval(174.5, 193.5, 9.0, 3.0), Rgba::rgb(120, 76, 52));
-        c.stroke(&line(175.0, 201.0, 183.0, 201.0), WHITE.fade(0.7), 1.6);
-        if self.busy {
+        c.blob(&rrect(173.0 + dx, 193.0 + dy, 12.0, 15.0, 3.0), MUG);
+        c.fill(&oval(174.5 + dx, 193.5 + dy, 9.0, 3.0), Rgba::rgb(120, 76, 52));
+        c.stroke(&line(175.0 + dx, 201.0 + dy, 183.0 + dx, 201.0 + dy), WHITE.fade(0.7), 1.6);
+        // steam rises only while the mug sits on the desk
+        if self.busy && dx == 0.0 && dy == 0.0 {
             for i in 0..2 {
                 let ph = (t * 0.45 + i as f32 * 0.5).fract();
                 let x0 = 177.0 + i as f32 * 4.0;
@@ -641,14 +999,15 @@ impl Scene {
         // while waiting the left arm props the chin and is drawn after the head
         let chin = self.busy && self.mood == Mood::Waiting;
         for (paw, sx) in [(p.l, -24.0), (p.r, 24.0)] {
-            if chin && sx < 0.0 {
+            // the sipping arm is drawn after the head too, so it does not slip under the face
+            if (chin && sx < 0.0) || (p.sip.is_some() && sx > 0.0) {
                 continue;
             }
             let py = rest_y - paw.lift;
             let arm = line(CX + sx, p.hy + 46.0, paw.x + PAW_W / 2.0, py + 5.0);
             c.stroke(&arm, INK, 14.5);
-            c.stroke(&arm, FUR, 10.5);
-            c.blob(&oval(paw.x, py, PAW_W, 13.0), FUR);
+            c.stroke(&arm, self.coat.fur, 10.5);
+            c.blob(&oval(paw.x, py, PAW_W, 13.0), self.coat.fur);
             // toes point down at the keys, so the toe lines sit at the front edge
             for tx in [6.5, 10.0, 13.5] {
                 c.stroke(&line(paw.x + tx, py + 12.0, paw.x + tx, py + 8.6), INK.fade(0.8), 1.1);
@@ -666,34 +1025,90 @@ impl Scene {
             let tw = if s == p.twitch_ear { p.twitch } else { 0.0 };
             let tip = (CX + s * mix(37.0 + tw * 0.6, 60.0), hy + mix(-53.0 + tw, -30.0));
             let inner = (CX + s * mix(34.5 + tw * 0.6, 52.0), hy + mix(-44.0 + tw, -28.0));
-            c.blob(&poly(&[(CX + s * 46.0, hy - 10.0), tip, (CX + s * 11.0, hy - 34.0)]), FUR);
-            c.fill(&poly(&[(CX + s * 37.0, hy - 18.0), inner, (CX + s * 19.0, hy - 32.0)]), PINK);
+            // which ears take a patch color is rolled with the patches
+            let pick = (self.patch_seed.wrapping_mul(0x2545_F491) >> if s < 0.0 { 20 } else { 26 }) & 3;
+            let ear = match (self.coat.patch, pick) {
+                (Some(p), 0) => p,
+                (Some(_), 1) if self.coat.tri => self.coat.dark,
+                _ => self.coat.fur,
+            };
+            c.blob(&poly(&[(CX + s * 46.0, hy - 10.0), tip, (CX + s * 11.0, hy - 34.0)]), ear);
+            c.fill(&poly(&[(CX + s * 37.0, hy - 18.0), inner, (CX + s * 19.0, hy - 32.0)]), self.coat.pink);
         }
         // head
-        c.blob(&oval(CX - 51.0, hy - 40.0, 102.0, 80.0), FUR);
-        // tabby stripes
-        for (x0, x1) in [(0.0, 0.0), (-11.0, -9.0), (11.0, 9.0)] {
-            c.stroke(&line(CX + x0, hy - 37.0, CX + x1, hy - 27.0), FUR_DARK, 3.4);
+        c.blob(&oval(CX - 51.0, hy - 40.0, 102.0, 80.0), self.coat.fur);
+        // patches run over the muzzle like real markings (it is drawn first for patched coats)
+        let muzzle = oval(CX - 16.0, hy + 3.0, 32.0, 20.0);
+        if self.coat.patch.is_some() {
+            c.fill(&muzzle, self.coat.cream);
         }
-        c.stroke(&quad(CX - 50.0, hy - 2.0, CX - 44.0, hy, CX - 40.0, hy - 6.0), FUR_DARK, 2.6);
-        c.stroke(&quad(CX + 50.0, hy - 2.0, CX + 44.0, hy, CX + 40.0, hy - 6.0), FUR_DARK, 2.6);
-        // muzzle
-        c.fill(&oval(CX - 16.0, hy + 3.0, 32.0, 20.0), CREAM);
+        if self.coat.patch.is_some() {
+            // clipped to the head, so a patch runs right up to the outline (drawn again over it)
+            let head = oval(CX - 51.0, hy - 40.0, 102.0, 80.0);
+            c.clip(Some(&head));
+            for (shape, col) in self.patches(CX, hy, 51.0, 40.0, 1, 3, 1) {
+                self.soft_patch(c, &shape, col);
+            }
+            c.clip(None);
+            c.stroke(&head, INK, OUTLINE);
+        }
+        self.marks_on(c, CX, hy - 6.0, 46.0, 32.0, &HEAD_STARS);
+        if matches!(self.coat.marks, Marks::Strawberry) {
+            let leaf = Rgba::rgb(96, 186, 92);
+            for (dx, tip) in [(-9.0f32, (-17.0f32, -43.0f32)), (0.0, (0.0, -47.0)), (9.0, (17.0, -43.0))] {
+                c.blob(&poly(&[(CX + dx - 5.0, hy - 37.0), (CX + tip.0, hy + tip.1), (CX + dx + 5.0, hy - 37.0)]), leaf);
+            }
+        }
+        if matches!(self.coat.marks, Marks::Rainbow) {
+            for (i, x) in [-24.0f32, -12.0, 0.0, 12.0, 24.0].into_iter().enumerate() {
+                c.stroke(&line(CX + x, hy - 37.0 + x.abs() * 0.12, CX + x * 0.85, hy - 25.0), RAINBOW[i], 4.0);
+            }
+            for (i, dy) in [-6.0f32, 0.0].into_iter().enumerate() {
+                c.stroke(&quad(CX - 50.0, hy + dy, CX - 44.0, hy + 2.0 + dy, CX - 39.0, hy - 4.0 + dy), RAINBOW[4 + i], 2.8);
+                c.stroke(&quad(CX + 50.0, hy + dy, CX + 44.0, hy + 2.0 + dy, CX + 39.0, hy - 4.0 + dy), RAINBOW[i], 2.8);
+            }
+        } else if self.coat.stripes {
+            for (x0, x1) in [(0.0, 0.0), (-11.0, -9.0), (11.0, 9.0)] {
+                c.stroke(&line(CX + x0, hy - 37.0, CX + x1, hy - 27.0), self.coat.dark, 3.4);
+            }
+            c.stroke(&quad(CX - 50.0, hy - 2.0, CX - 44.0, hy, CX - 40.0, hy - 6.0), self.coat.dark, 2.6);
+            c.stroke(&quad(CX + 50.0, hy - 2.0, CX + 44.0, hy, CX + 40.0, hy - 6.0), self.coat.dark, 2.6);
+        }
+        // on patched coats the patches show through the muzzle, lighter
+        if self.coat.patch.is_some() {
+            soft_cream(c, CX - 16.0, hy + 3.0, 32.0, 20.0, self.coat.cream, 1.18);
+        } else {
+            c.fill(&muzzle, self.coat.cream);
+        }
         // eyes
         for ex in [CX - 22.0, CX + 22.0] {
             let ey = hy - 3.0;
             if p.eyes_closed {
-                c.stroke(&quad(ex - 7.5, ey + 1.0, ex, ey + 7.0, ex + 7.5, ey + 1.0), EYE, 2.6);
+                c.stroke(&quad(ex - 7.5, ey + 1.0, ex, ey + 7.0, ex + 7.5, ey + 1.0), self.coat.eye, 2.6);
             } else {
                 let x = ex + p.look;
-                c.fill(&oval(x - 7.5, ey - 9.0, 15.0, 18.0), EYE);
-                c.fill(&circle(x - 2.6, ey - 4.0, 3.3), WHITE);
-                c.fill(&circle(x + 2.8, ey + 3.4, 1.6), WHITE);
                 if p.lid > 0.0 {
-                    // the upper lid covers the top of the eye
+                    // the upper lid hides the top of the eye: only the part below it is drawn,
+                    // so markings around the eye stay visible
                     let edge = ey - 9.0 + 18.0 * p.lid;
-                    c.fill(&rrect(x - 9.0, ey - 11.0, 18.0, edge - (ey - 11.0), 2.0), FUR);
-                    c.stroke(&line(x - 8.0, edge, x + 8.0, edge), EYE, 2.2);
+                    let open: Vec<(f32, f32)> = (0..32)
+                        .map(|i| {
+                            let a = i as f32 / 32.0 * 2.0 * PI;
+                            (x + 7.5 * a.cos(), (ey + 9.0 * a.sin()).max(edge))
+                        })
+                        .collect();
+                    c.fill(&poly(&open), self.coat.eye);
+                    if ey - 4.0 > edge + 2.0 {
+                        c.fill(&circle(x - 2.6, ey - 4.0, 3.3), WHITE);
+                    }
+                    if ey + 3.4 > edge + 1.0 {
+                        c.fill(&circle(x + 2.8, ey + 3.4, 1.6), WHITE);
+                    }
+                    c.stroke(&line(x - 8.0, edge, x + 8.0, edge), self.coat.eye, 2.2);
+                } else {
+                    c.fill(&oval(x - 7.5, ey - 9.0, 15.0, 18.0), self.coat.eye);
+                    c.fill(&circle(x - 2.6, ey - 4.0, 3.3), WHITE);
+                    c.fill(&circle(x + 2.8, ey + 3.4, 1.6), WHITE);
                 }
             }
         }
@@ -701,7 +1116,7 @@ impl Scene {
         c.fill(&oval(CX - 43.0, hy + 6.0, 16.0, 9.0), BLUSH);
         c.fill(&oval(CX + 27.0, hy + 6.0, 16.0, 9.0), BLUSH);
         let nose = poly(&[(CX - 4.5, hy + 6.0), (CX + 4.5, hy + 6.0), (CX, hy + 10.5)]);
-        c.fill(&nose, PINK);
+        c.fill(&nose, self.coat.pink);
         c.stroke(&nose, PINK_DARK, 1.2);
         if p.droop > 0.5 {
             // a small worried frown

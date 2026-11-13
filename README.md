@@ -14,6 +14,8 @@ taskbar and shows what your background jobs are doing.
   frowns and the screen shows a blinking red X.
 - **All done:** when a job goes back to idle, the kitten cheers with its paws up for a
   moment, with sparkles and a green tick, before it settles down for a nap.
+- **Coffee break:** every minute or two while it works or waits, the kitten picks up its
+  mug, takes a sip with its eyes closed, puts it down and carries on.
 - **Idle:** the kitten naps on its keyboard. Zzz float up and the screen shows a moon
   and stars.
 
@@ -74,6 +76,8 @@ Drag the kitten anywhere with the left mouse button. Right-click it for:
 - **Back to corner:** back to the bottom-right of its display.
 - **Monitor:** pick which display the kitten lives on. It moves there at once and starts
   there from then on (the choice is saved in `kitten-assistant.ini` next to the exe).
+- **Always on top:** on (checked) keeps the kitten above other windows; off lets other
+  windows cover it. Saved in `kitten-assistant.ini` too.
 - **Quit.**
 
 Only one kitten runs at a time, and starting a second one does nothing.
@@ -162,8 +166,11 @@ Leave out `--bg` for a transparent PNG.
 - The frame goes to Windows as a per-pixel-alpha layered window (`UpdateLayeredWindow`).
   That gives the kitten soft edges on any wallpaper, and clicks pass through the clear
   parts.
-- The window is topmost, never takes focus and has no taskbar button. It draws at 30 fps
-  while busy and 15 fps while napping.
+- The window is topmost, never takes focus and has no taskbar button. It is built to stay
+  light: 30 fps while busy and 15 fps while napping at the lowest CPU priority in Windows'
+  efficiency mode (about 1 ms of drawing a frame), only the part of the picture that changed
+  is handed to Windows, and while a borderless or exclusive full-screen app or game has the focus the kitten
+  holds still and only redraws when its status changes.
 - Ordinary screenshot tools may not capture layered windows. Use `snapshot` for
   pictures.
 

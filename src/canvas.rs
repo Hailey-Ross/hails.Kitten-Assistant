@@ -12,14 +12,14 @@ impl Rgba {
     pub const fn rgb(r: u8, g: u8, b: u8) -> Self {
         Rgba(r, g, b, 255)
     }
-    /// Same colour with its alpha multiplied by `f` (0..1).
+    /// Same color with its alpha multiplied by `f` (0..1).
     pub fn fade(self, f: f32) -> Self {
         let f = f.clamp(0.0, 1.0);
         Rgba(self.0, self.1, self.2, (self.3 as f32 * f).round() as u8)
     }
 }
 
-/// Outline colour and width used for the sticker look.
+/// Outline color and width used for the sticker look.
 pub const INK: Rgba = Rgba::rgb(78, 50, 42);
 pub const OUTLINE: f32 = 2.0;
 

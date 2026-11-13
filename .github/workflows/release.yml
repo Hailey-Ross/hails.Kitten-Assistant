@@ -1,0 +1,86 @@
+name: Windows release
+on:
+  push:
+    branches: ['**']
+  release:
+    types: [published]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  windows:
+    if: github.event_name != 'release' || github.event.release.tag_name != 'experimental'
+    runs-on: windows-2025
+    timeout-minutes: 30
+    concurrency:
+      group: windows-build-${{ github.event_name == 'release' && github.event.release.tag_name || github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: windows-release
+          cache-on-failure: true
+      - name: Test
+        run: cargo test --release --locked
+      - name: Build
+        shell: pwsh
+        env:
+          # The version is Cargo.toml's; every build carries the run number, which only goes up, so builds of one
+          # version are ordered (the updater compares version, then build). Only a published release's build
+          # updates itself.
+          KITTEN_BUILD: ${{ github.run_number }}
+          KITTEN_RELEASE: ${{ github.event_name == 'release' && '1' || '0' }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          if ($env:KITTEN_RELEASE -eq '1' -and -not $env:RELEASE_TAG.StartsWith("v$version")) {
+            throw "release tag $env:RELEASE_TAG does not match Cargo.toml version $version (expected v$version...)"
+          }
+          cargo build --release --locked
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target/release/kitten-assistant.exe dist/
+          $hash = (Get-FileHash dist/kitten-assistant.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  kitten-assistant.exe" | Set-Content -NoNewline -Encoding ascii dist/kitten-assistant.exe.sha256
+          [ordered]@{ version = $version; build = [int]$env:KITTEN_BUILD; release = ($env:KITTEN_RELEASE -eq '1'); sha256 = $hash
+            size = (Get-Item dist/kitten-assistant.exe).Length; commit = '${{ github.sha }}' } |
+            ConvertTo-Json | Set-Content -Encoding ascii dist/release.json
+          Get-Content dist/release.json
+          Get-ChildItem dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: kitten-assistant-windows-x64
+          retention-days: 7
+          path: dist/*
+  publish:
+    needs: windows
+    if: github.event_name == 'release' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: windows-release-publish
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: kitten-assistant-windows-x64
+          path: dist
+      # A pre-release, so the installed kittens' updater (stable releases only) never takes it.
+      - name: Publish rolling experimental
+        if: github.event_name != 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete experimental --yes --cleanup-tag || true
+          gh release create experimental dist/* --prerelease --target "${{ github.sha }}" \
+            --title "Kitten Assistant experimental" \
+            --notes "The newest build of main (build ${{ github.run_number }}, ${{ github.sha }}). Not a stable release: installed kittens do not update to it, and it does not update itself."
+      - name: Attach numbered release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$RELEASE_TAG" dist/kitten-assistant.exe dist/kitten-assistant.exe.sha256 dist/release.json --clobber
