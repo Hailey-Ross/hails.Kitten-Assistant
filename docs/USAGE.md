@@ -68,9 +68,9 @@ character that is not a letter, so `Waiting:`, `waiting...` and `WAITING for CI`
 | Problem | `Failed`, `Fail`, `Error`, `Problem` | ears droop, a small frown, a blinking red X on a dark red screen, a red power light |
 | Testing | `Testing`, `Test`, `Tests`, `Playtesting`, `Playtest`, `Checking`, `Check`, `Verifying`, `Verify`, `QA`, `Autotest`, `Regression`, `Smoke` | the game tester: holds a controller (a button lights up with each press) and plays a little platformer, eyes on the screen; for the last 2.2 seconds of every 6.5-second round the game shows a pause sign and the kitten jots three lines on the notepad beside the keyboard with a pencil, looking down; a blue power light |
 | Building | `Building`, `Build`, `Rebuilding`, `Rebuild`, `Compiling`, `Compile`, `Linking`, `Packaging`, `Bundling` | types in a yellow hard hat while a brick wall goes up course by course on the screen |
-| Researching | `Researching`, `Research`, `Reading`, `Read`, `Reviewing`, `Review`, `Analyzing`, `Analyze`, `Searching`, `Search`, `Investigating`, `Investigate`, `Studying`, `Exploring`, `Digging` | holds a magnifying glass up to the screen, where a lens sweeps along the lines of a page and lights up the one it reads; a blue power light |
+| Researching | `Researching`, `Research`, `Reading`, `Read`, `Reviewing`, `Review`, `Analyzing`, `Analyze`, `Searching`, `Search`, `Investigating`, `Investigate`, `Studying`, `Exploring`, `Digging` | puts on round reading glasses, paws folded on the keyboard, and leans in to the screen, where a page scrolls slowly up and some lines get a yellow highlight as they pass the reading spot; a blue power light |
 | Transferring | down: `Downloading`, `Download`, `Fetching`, `Fetch`, `Pulling`, `Pull`, `Installing`, `Install`, `Syncing`, `Sync`, `Copying`, `Copy`; up: `Uploading`, `Upload`, `Pushing`, `Push`, `Deploying`, `Deploy`, `Publishing`, `Publish`, `Backing`, `Backup` | types while files fly between a cloud and a tray on the screen (down or up, with an arrow) and a progress bar fills |
-| Thinking | `Thinking`, `Think`, `Planning`, `Plan`, `Designing`, `Design`, `Brainstorming`, `Pondering` | chin on a paw like waiting but without the drumming, a thought cloud with a light bulb that flickers on, and a flowchart that sketches itself on the screen |
+| Thinking | `Thinking`, `Think`, `Planning`, `Plan`, `Designing`, `Design`, `Brainstorming`, `Pondering` | draws on a whiteboard on an easel beside the desk with a blue marker: a different picture every round (a flowchart, a bar chart, a line graph, a mind map, a roadmap, a pie chart, a rocket, a Venn diagram or a light bulb), drawn over about 6.5 seconds and admired for 2 more; the screen shows a checklist that ticks off as the drawing grows |
 | All done | (no word: a busy line turns idle) | for 2.5 seconds: paws up, little hops, sparkles, a green tick and "all done!", then the nap |
 
 The all-done moment follows any busy or waiting line that turns idle, but not a problem line:
@@ -78,13 +78,19 @@ a job that ended badly goes straight to sleep. To use the moods from a script, w
 `Waiting: ...` while you wait on something (a download, a review, another machine) and
 `Failed: ...` when a step fails, and leave the problem line up until someone has seen it.
 
-Now and then (at random, every 15 to 35 seconds) a kitten in any mood but testing and
-researching (its paws are full there) takes a
+Now and then (at random, every 15 to 35 seconds) a kitten in any mood but testing (its paws
+are full of gamepad there) takes a
 coffee break of about 2.4 seconds: the paw on the mug's side (the right of the picture) lifts
 the mug straight up and over to its mouth, the kitten sips with its eyes closed, puts the mug
 back and returns to its mood. While typing, the other paw rests on the keys during the sip;
 while waiting, the chin stays propped. The status line does not change it, and a napping
 kitten never sips. `snapshot --sip` draws the middle of a sip.
+
+About one coffee break in four, the mug turns out to be empty (about 7 seconds): the kitten
+lifts it, looks in, droops its ears with a little red annoyed mark, holds the mug out in front
+of it, reaches off the left side of the picture for a red kettle, pours until the mug is full,
+puts the kettle back and settles in, eyes closed and content. The mug steams again once it is
+full.
 
 Details that matter when you write the file yourself:
 
