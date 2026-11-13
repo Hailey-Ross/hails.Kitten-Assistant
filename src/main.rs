@@ -163,7 +163,16 @@ fn main() {
             win::message(&format!("Kitten Assistant {}", update::label()));
             Ok(())
         }
-        other => Err(format!("unknown command {other}\n\n{USAGE}")),
+        // A status line passed without `say` (`kitten-assistant "Building"`) is taken as one: no message box, which
+        // would block a script waiting for the call to return.
+        other => {
+            let text = match &o.arg {
+                Some(a) => format!("{other} {a}"),
+                None => other.to_string(),
+            };
+            log(&format!("no command `{other}`: taken as say \"{text}\""));
+            std::fs::write(&status, text).map_err(|e| e.to_string())
+        }
     };
     if let Err(e) = result {
         log(&e);

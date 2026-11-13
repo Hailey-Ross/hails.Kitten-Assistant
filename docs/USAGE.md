@@ -107,6 +107,10 @@ kitten-assistant version              show the version (in a message box)
 kitten-assistant help                 show the command summary (in a message box)
 ```
 
+- **Forgot `say`?** Text that is not a command is taken as the status line:
+  `kitten-assistant "Building"` works like `kitten-assistant say "Building"` and never opens a
+  message box, so a script waiting on the call does not get stuck.
+
 - **Updates install themselves.** A kitten downloaded from the Releases page checks GitHub
   30 seconds after it starts and then every 6 hours. When a newer stable release is out, it
   downloads it, checks it against the SHA-256 the release publishes, swaps it in and restarts
