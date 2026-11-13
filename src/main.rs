@@ -26,7 +26,7 @@ kitten-assistant version              show the version
 
 options:
   --status FILE    status file (default: status.txt next to the exe, or %KITTEN_STATUS%)
-  --scale N        size multiplier (default: follows screen DPI)
+  --scale N        size multiplier (default: right-click > Size, else the screen DPI)
   --monitor N      start on display N and make it the default (right-click > Monitor does the same)
   --x N --y N      window position (default: bottom-right of the default display)
 snapshot options:
@@ -246,6 +246,35 @@ mod win {
     const MENU_TOPMOST: usize = 3;
     const MENU_MONITOR: usize = 100; // + index into monitors()
     const MENU_COAT: usize = 200; // + index into scene::COATS
+    const MENU_SIZE: usize = 300; // + index into SIZES
+    const MENU_SIZE_AUTO: usize = 4;
+    const SIZES: [f32; 9] = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0];
+
+    fn dpi_scale() -> f32 {
+        unsafe { GetDpiForSystem() as f32 / 96.0 }
+    }
+
+    /// `scale` in the ini, from right-click > Size.
+    fn saved_scale() -> Option<f32> {
+        setting("scale")?.parse::<f32>().ok().filter(|s| s.is_finite())
+    }
+
+    /// A 32-bit top-down DIB of w x h selected into `dc`; returns it, its pixels and what it replaced.
+    unsafe fn new_dib(dc: HDC, w: i32, h: i32) -> Option<(HBITMAP, *mut u8, HGDIOBJ)> {
+        let mut bmi: BITMAPINFO = std::mem::zeroed();
+        bmi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
+        bmi.bmiHeader.biWidth = w;
+        bmi.bmiHeader.biHeight = -h;
+        bmi.bmiHeader.biPlanes = 1;
+        bmi.bmiHeader.biBitCount = 32;
+        bmi.bmiHeader.biCompression = BI_RGB;
+        let mut bits: *mut c_void = null_mut();
+        let dib = CreateDIBSection(dc, &bmi, DIB_RGB_COLORS, &mut bits, null_mut(), 0);
+        if dib.is_null() || bits.is_null() {
+            return None;
+        }
+        Some((dib, bits as *mut u8, SelectObject(dc, dib as HGDIOBJ)))
+    }
 
     /// Stay above other windows (`always_on_top` in the ini; on unless it says 0).
     fn topmost() -> bool {
@@ -281,6 +310,8 @@ mod win {
         scene: scene::Scene,
         pix: Pixmap,
         sc: f32,
+        /// The size follows the screen DPI (no --scale and nothing saved).
+        auto_size: bool,
         start: Instant,
         status: PathBuf,
         mem_dc: HDC,
@@ -341,6 +372,36 @@ mod win {
             let pose = self.scene.update(t);
             self.scene.render(&mut self.pix, self.sc, t, &pose);
             self.push();
+        }
+
+        /// New size: a new surface, and the window grows or shrinks around its bottom-right corner.
+        fn resize(&mut self, sc: f32) {
+            let sc = sc.clamp(0.25, 8.0);
+            let (w, h) = ((scene::W * sc).ceil() as i32, (scene::H * sc).ceil() as i32);
+            let Some(pix) = Pixmap::new(w as u32, h as u32) else { return };
+            unsafe {
+                let Some((dib, bits, prev)) = new_dib(self.mem_dc, w, h) else {
+                    log("could not create the drawing surface for the new size");
+                    return;
+                };
+                DeleteObject(prev);
+                self.dib = dib;
+                self.bits = bits;
+                self.pix = pix;
+                self.sc = sc;
+                self.last_frame.clear();
+                let mut r = RECT { left: 0, top: 0, right: 0, bottom: 0 };
+                GetWindowRect(self.hwnd, &mut r);
+                let (x, y) = if setting("position").is_some() {
+                    let (x, y) = (r.right - w, r.bottom - h);
+                    save_setting("position", &format!("{x},{y}"));
+                    (x, y)
+                } else {
+                    corner(w, h)
+                };
+                SetWindowPos(self.hwnd, null_mut(), x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
+            }
+            self.frame();
         }
 
         fn poll(&mut self) {
@@ -600,11 +661,22 @@ mod win {
             let column = if i == scene::COATS.len().div_ceil(2) { MF_MENUBARBREAK } else { 0 };
             AppendMenuW(coats, MF_STRING | check | column, MENU_COAT + i, label.as_ptr());
         }
-        let (a, s, col, top, b) = (wide("Back to corner"), wide("Monitor"), wide("Color"), wide("Always on top"), wide("Quit"));
+        let sizes = CreatePopupMenu();
+        let (sc, auto) = APP.with(|a| a.try_borrow().ok().and_then(|g| g.as_ref().map(|app| (app.sc, app.auto_size)))).unwrap_or((1.0, true));
+        let auto_label = wide(&format!("Default ({}%, follows display scaling)", (dpi_scale() * 100.0).round()));
+        AppendMenuW(sizes, MF_STRING | if auto { MF_CHECKED } else { MF_UNCHECKED }, MENU_SIZE_AUTO, auto_label.as_ptr());
+        AppendMenuW(sizes, MF_SEPARATOR, 0, null());
+        for (i, s) in SIZES.iter().enumerate() {
+            let label = wide(&format!("{}%", (s * 100.0).round()));
+            let check = if !auto && (s - sc).abs() < 0.005 { MF_CHECKED } else { MF_UNCHECKED };
+            AppendMenuW(sizes, MF_STRING | check, MENU_SIZE + i, label.as_ptr());
+        }
+        let (a, s, col, size, top, b) = (wide("Back to corner"), wide("Monitor"), wide("Color"), wide("Size"), wide("Always on top"), wide("Quit"));
         let on_top = topmost();
         AppendMenuW(m, MF_STRING, MENU_CORNER, a.as_ptr());
         AppendMenuW(m, MF_STRING | MF_POPUP, sub as usize, s.as_ptr());
         AppendMenuW(m, MF_STRING | MF_POPUP, coats as usize, col.as_ptr());
+        AppendMenuW(m, MF_STRING | MF_POPUP, sizes as usize, size.as_ptr());
         AppendMenuW(m, MF_STRING | if on_top { MF_CHECKED } else { MF_UNCHECKED }, MENU_TOPMOST, top.as_ptr());
         AppendMenuW(m, MF_SEPARATOR, 0, null());
         AppendMenuW(m, MF_STRING, MENU_QUIT, b.as_ptr());
@@ -621,6 +693,21 @@ mod win {
             }
             MENU_QUIT => {
                 DestroyWindow(hwnd);
+            }
+            MENU_SIZE_AUTO => {
+                clear_setting("scale");
+                with_app(|a| {
+                    a.auto_size = true;
+                    a.resize(dpi_scale());
+                });
+            }
+            c if c >= MENU_SIZE && c - MENU_SIZE < SIZES.len() => {
+                let s = SIZES[c - MENU_SIZE];
+                save_setting("scale", &s.to_string());
+                with_app(|a| {
+                    a.auto_size = false;
+                    a.resize(s);
+                });
             }
             c if c >= MENU_COAT && c - MENU_COAT < scene::COATS.len() => {
                 let coat = scene::COATS[c - MENU_COAT];
@@ -778,7 +865,9 @@ mod win {
             };
             SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling, &eco as *const _ as *const c_void, std::mem::size_of::<PROCESS_POWER_THROTTLING_STATE>() as u32);
             SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-            let sc = o.scale.unwrap_or_else(|| GetDpiForSystem() as f32 / 96.0).clamp(0.25, 8.0);
+            // --scale wins over the saved size, which wins over the screen DPI
+            let picked = o.scale.or_else(saved_scale);
+            let sc = picked.unwrap_or_else(dpi_scale).clamp(0.25, 8.0);
             let (w, h) = ((scene::W * sc).ceil() as i32, (scene::H * sc).ceil() as i32);
 
             let hinst = GetModuleHandleW(null());
@@ -834,23 +923,11 @@ mod win {
                 return Err("could not create the window".into());
             }
 
-            // 32-bit top-down DIB the frame is copied into each tick
+            // the DIB the frame is copied into each tick
             let screen = GetDC(null_mut());
             let mem_dc = CreateCompatibleDC(screen);
             ReleaseDC(null_mut(), screen);
-            let mut bmi: BITMAPINFO = std::mem::zeroed();
-            bmi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;
-            bmi.bmiHeader.biWidth = w;
-            bmi.bmiHeader.biHeight = -h;
-            bmi.bmiHeader.biPlanes = 1;
-            bmi.bmiHeader.biBitCount = 32;
-            bmi.bmiHeader.biCompression = BI_RGB;
-            let mut bits: *mut c_void = null_mut();
-            let dib = CreateDIBSection(mem_dc, &bmi, DIB_RGB_COLORS, &mut bits, null_mut(), 0);
-            if dib.is_null() || bits.is_null() {
-                return Err("could not create the drawing surface".into());
-            }
-            let old = SelectObject(mem_dc, dib as HGDIOBJ);
+            let (dib, bits, old) = new_dib(mem_dc, w, h).ok_or("could not create the drawing surface")?;
 
             let mut scene = scene::Scene::new();
             scene.coat = scene::Coat::named(&setting("coat").unwrap_or_default());
@@ -860,12 +937,13 @@ mod win {
                 scene,
                 pix: Pixmap::new(w as u32, h as u32).ok_or("pixmap")?,
                 sc,
+                auto_size: picked.is_none(),
                 start: Instant::now(),
                 status,
                 mem_dc,
                 dib,
                 old,
-                bits: bits as *mut u8,
+                bits,
                 frame_ms: 0,
                 first_poll: true,
                 last_frame: Vec::new(),

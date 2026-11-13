@@ -76,6 +76,9 @@ Drag the kitten anywhere with the left mouse button. Right-click it for:
 - **Back to corner:** back to the bottom-right of its display.
 - **Monitor:** pick which display the kitten lives on. It moves there at once and starts
   there from then on (the choice is saved in `kitten-assistant.ini` next to the exe).
+- **Size:** make the kitten bigger or smaller (50% to 300%), or back to the default that
+  follows the display scaling. It resizes at once and keeps that size at every start (saved
+  in `kitten-assistant.ini`); `--scale N` on the command line wins over it.
 - **Always on top:** on (checked) keeps the kitten above other windows; off lets other
   windows cover it. Saved in `kitten-assistant.ini` too.
 - **Quit.**
@@ -132,7 +135,7 @@ that has the assistant set a short status line at each step and `idle` when it i
 | Option         | Meaning                                                     |
 |----------------|-------------------------------------------------------------|
 | `--status FILE`| status file to watch (default `status.txt` beside the exe)  |
-| `--scale N`    | size multiplier (default follows the screen DPI)            |
+| `--scale N`    | size multiplier (default: right-click > Size, else the screen DPI) |
 | `--monitor N`  | start on display N and make it the default                  |
 | `--x N --y N`  | start position in screen pixels (default bottom-right)      |
 

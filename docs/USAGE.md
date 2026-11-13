@@ -139,7 +139,7 @@ kitten-assistant help                 show the command summary (in a message box
 | Option          | Used by        | Meaning                                                         |
 |-----------------|----------------|-----------------------------------------------------------------|
 | `--status FILE` | run, say, idle | the status file (see [section 5](#5-choosing-a-status-file))    |
-| `--scale N`     | run, snapshot  | size multiplier; default follows the screen's DPI (snapshot: 2) |
+| `--scale N`     | run, snapshot  | size multiplier; default: right-click > Size, else the screen's DPI (snapshot: 2) |
 | `--monitor N`   | run            | start on display N (the number in Windows' Display settings) and save it as the default |
 | `--x N --y N`   | run            | window position in screen pixels; default bottom-right of the default display, above its taskbar |
 | `--busy TEXT`   | snapshot       | draw the busy pose with TEXT; default is napping                |
@@ -335,8 +335,11 @@ for that project only), and make sure the assistant can run
   main display until it comes back.
 - **Start somewhere else:** `kitten-assistant --x 100 --y 900` (screen pixels; displays
   above or left of the main one have negative positions).
-- **Bigger or smaller:** `kitten-assistant --scale 3` (whole or decimal numbers). By default the
-  size follows your screen's scaling setting.
+- **Bigger or smaller:** right-click the kitten and open **Size**. Pick 50% to 300% and the
+  kitten resizes at once, keeping its bottom-right corner where it was. The choice is saved in
+  `kitten-assistant.ini` (`scale=1.5`, for example) and used at every start. **Default** forgets
+  it, so the size follows your screen's scaling setting again. `kitten-assistant --scale 3` (whole
+  or decimal numbers) sets the size for that run only and wins over the saved one.
 - **It stays on top** of other windows by default but never takes the keyboard focus, and it
   has no taskbar button. Clicks on the clear area around the kitten go through to whatever is
   behind it.
