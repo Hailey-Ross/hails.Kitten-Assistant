@@ -6,6 +6,7 @@
 //! or says "idle", the kitten naps.
 #![windows_subsystem = "windows"]
 
+mod brain;
 mod canvas;
 mod menu;
 mod scene;
@@ -61,6 +62,7 @@ struct Opts {
     menu: Option<String>,
     hover: Option<usize>,
     refill: Option<f64>,
+    event: Option<String>,
     coat: Option<String>,
     seed: Option<u32>,
 }
@@ -85,7 +87,8 @@ fn parse() -> Result<Opts, String> {
             "--sip" => o.sip = true,
             "--egg" => o.egg = true,
             "--menu" => o.menu = Some(val()?),
-            "--refill" => o.refill = Some(val()?.parse().map_err(|_| "bad --refill")?),
+            "--event" => o.event = Some(val()?),
+        "--refill" => o.refill = Some(val()?.parse().map_err(|_| "bad --refill")?),
             "--hover" => o.hover = Some(val()?.parse().map_err(|_| "bad --hover")?),
             "--coat" => o.coat = Some(val()?),
             "--seed" => o.seed = Some(val()?.parse().map_err(|_| "bad --seed")?),
@@ -251,13 +254,25 @@ fn snapshot(o: &Opts) -> Result<(), String> {
     s.patch_seed = o.seed.unwrap_or(1);
     // no surprise sips in snapshots; --sip puts one in its drinking moment
     // --sip draws a real sip (never an empty-mug refill) in its drinking moment
-    s.next_sip = f64::MAX;
+    s.brain.next_event = f64::MAX;
     if o.sip {
-        s.sip_start = t_end - 1.25;
+        s.brain.force(brain::Event::Sip, t_end - 1.25);
     }
     // --refill P: that moment (0..1) of an empty-mug refill (not in the usage text)
     if let Some(p) = o.refill {
-        s.refill_start = t_end - p * 7.0;
+        s.brain.force(brain::Event::Refill, t_end - p * 7.0);
+    }
+    // --event NAME@P: that moment of a rare event (stretch, yawn, look; not in the usage text)
+    if let Some((name, p)) = o.event.as_deref().and_then(|e| e.split_once('@')) {
+        let e = match name {
+            "stretch" => brain::Event::Stretch,
+            "yawn" => brain::Event::Yawn,
+            "look" => brain::Event::LookAround,
+            "sip" => brain::Event::Sip,
+            _ => brain::Event::Refill,
+        };
+        let p: f64 = p.parse().map_err(|_| "bad --event")?;
+        s.brain.force(e, t_end - p * e.secs());
     }
     if o.done {
         // the "all done!" moment, one second in
@@ -872,6 +887,7 @@ mod win {
                 save_setting("always_on_top", if on { "0" } else { "1" });
                 apply_topmost(hwnd, !on);
             }
+            menu::Action::CheckUpdate => check_from_menu(hwnd),
             menu::Action::Quit => {
                 close_menu_now();
                 DestroyWindow(hwnd);
@@ -986,6 +1002,29 @@ mod win {
                     return;
                 }
                 std::thread::sleep(std::time::Duration::from_secs(6 * 3600));
+            }
+        });
+    }
+
+    /// Right-click > Check for Update: checks now on a background thread and says what it found; a newer release
+    /// is downloaded, verified and swapped in like an automatic update.
+    fn check_from_menu(hwnd: HWND) {
+        if !update::RELEASE_BUILD {
+            let _ = std::thread::Builder::new().name("update-msg".into()).spawn(|| {
+                message(&format!("This is a development build ({}): only release builds update themselves.", update::label()));
+            });
+            return;
+        }
+        let at = hwnd as usize;
+        let _ = std::thread::Builder::new().name("update".into()).spawn(move || match update::check_and_stage() {
+            Ok(Some(tag)) => {
+                log(&format!("update {tag} downloaded and verified (running {})", update::label()));
+                unsafe { PostMessageW(at as HWND, WM_UPDATE_READY, 0, 0) };
+            }
+            Ok(None) => message(&format!("Kitten Assistant {} is up to date.", update::label())),
+            Err(e) => {
+                log(&format!("update check: {e}"));
+                message(&format!("Could not check for updates: {e}"));
             }
         });
     }

@@ -78,18 +78,25 @@ a job that ended badly goes straight to sleep. To use the moods from a script, w
 `Waiting: ...` while you wait on something (a download, a review, another machine) and
 `Failed: ...` when a step fails, and leave the problem line up until someone has seen it.
 
-Now and then (at random, every 15 to 35 seconds) a kitten in any mood but testing (its paws
-are full of gamepad there) takes a
-coffee break of about 2.4 seconds: the paw on the mug's side (the right of the picture) lifts
-the mug straight up and over to its mouth, the kitten sips with its eyes closed, puts the mug
-back and returns to its mood. While typing, the other paw rests on the keys during the sip;
-while waiting, the chin stays propped. The status line does not change it, and a napping
-kitten never sips. `snapshot --sip` draws the middle of a sip.
+Now and then (at random, every 15 to 35 seconds) the kitten takes a short break from its mood.
+One part of the kitten decides what it does: the mood's own loop, or one break at a time, and
+the break has both paws until it ends. Breaks start only where the mood can pause (a testing
+kitten between rounds, a planning kitten once a drawing is done), the mood's loop stops while
+the break runs and picks up where it stopped, and the paws move over smoothly whenever the
+kitten switches. A new status line that comes in during a break shows once the break is over
+(the bubble text changes at once); a napping kitten takes no breaks, and going idle ends one.
+
+- **A sip** (about 2.4 seconds): the paw on the mug's side (the right of the picture) lifts the
+  mug straight up and over to its mouth, the kitten sips with its eyes closed, puts the mug
+  back and returns to its mood. `snapshot --sip` draws the middle of a sip.
+- **A stretch** (about 2.6 seconds): both arms up high, eyes squeezed shut, head back a little.
+- **A yawn** (about 2.2 seconds): a wide-open mouth with its eyes closed.
+- **A look around** (about 3.2 seconds): it glances off to the left, then the right, then back.
 
 About one coffee break in four, the mug turns out to be empty (about 7 seconds): the kitten
 lifts it, looks in, droops its ears with a little red annoyed mark, holds the mug out in front
 of it, reaches off the left side of the picture for a red kettle, pours until the mug is full,
-puts the kettle back and settles in, eyes closed and content, then takes a proper sip of the fresh coffee. The mug steams again once it is
+puts the kettle back and settles in, eyes closed and content, then takes a proper sip of the fresh coffee (one break: the mood waits for both). The mug steams again once it is
 full.
 
 Details that matter when you write the file yourself:
@@ -387,6 +394,9 @@ for that project only), and make sure the assistant can run
 - **It keeps going while you play:** the kitten keeps animating and showing new statuses while
   a full-screen (or borderless full-screen) app or game has the focus, at the same light frame
   rate, and never takes the focus.
+- **Check for an update now:** right-click the kitten and click **Check for Update**. A newer
+  release is downloaded, checked and started in place of the old one (the kitten restarts);
+  otherwise a message says it is up to date. A development build says it does not update.
 - **Always on top on or off:** right-click the kitten and click **Always on top**. A check
   mark means on. Off lets other windows cover the kitten (click the desktop or minimize them
   to see it again). The choice is saved in `kitten-assistant.ini` (`always_on_top=0` or `1`)

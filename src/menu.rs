@@ -14,6 +14,7 @@ use crate::scene;
 pub enum Action {
     Corner,
     Topmost,
+    CheckUpdate,
     Quit,
     SizeAuto,
     Size(usize),
@@ -36,6 +37,7 @@ enum Icon {
     Color,
     Size,
     Pin,
+    Update,
     Quit,
     None,
 }
@@ -192,7 +194,8 @@ impl Menu {
                 Row { go: Some(Page::Color), ..row("Color", Icon::Color) },
                 Row { go: Some(Page::Size), ..row("Size", Icon::Size) },
                 Row { act: Some(Action::Topmost), check: Some(self.info.topmost), ..row("Always on top", Icon::Pin) },
-                Row { act: Some(Action::Quit), gap: true, ..row("Quit", Icon::Quit) },
+                Row { act: Some(Action::CheckUpdate), gap: true, ..row("Check for Update", Icon::Update) },
+                Row { act: Some(Action::Quit), ..row("Quit", Icon::Quit) },
             ],
             Page::Monitor => self.info.monitors.iter().enumerate()
                 .map(|(i, (name, home))| Row { act: Some(Action::Monitor(i)), check: Some(*home), ..row(name, Icon::None) })
@@ -605,6 +608,20 @@ fn icon(c: &mut Canvas, icon: Icon, x: f32, y: f32, hot: bool, t: f32) {
             c.fill(&circle(p(0.0, -3.0).0, p(0.0, -3.0).1, 3.8), col);
             let (a0, a1) = (p(0.0, 0.0), p(0.0, 7.0));
             c.stroke(&line(a0.0, a0.1, a1.0, a1.1), col, 1.6);
+        }
+        Icon::Update => {
+            // a circular arrow, turning a little while hovered
+            let a0 = wig * 0.25;
+            let pts: Vec<(f32, f32)> = (0..=20).map(|i| {
+                let a = a0 + 0.5 + i as f32 / 20.0 * 4.9;
+                (x + 5.5 * a.cos(), y + 5.5 * a.sin())
+            }).collect();
+            c.stroke(&polyline(&pts), col, 1.6);
+            let a = a0 + 5.4;
+            let (tx, ty) = (x + 5.5 * a.cos(), y + 5.5 * a.sin());
+            let (dx, dy) = (-a.sin(), a.cos());
+            let (nx, ny) = (a.cos(), a.sin());
+            c.fill(&poly(&[(tx + 3.2 * dx, ty + 3.2 * dy), (tx + 2.6 * nx, ty + 2.6 * ny), (tx - 2.6 * nx, ty - 2.6 * ny)]), col);
         }
         Icon::Quit => {
             c.stroke(&line(x - 4.5 - wig * 0.2, y - 4.5, x + 4.5 + wig * 0.2, y + 4.5), Rgba::rgb(196, 80, 80), 1.9);

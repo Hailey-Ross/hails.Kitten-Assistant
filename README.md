@@ -113,7 +113,7 @@ The first word of the status line picks how the kitten acts (any case; the word 
 | All done | (a busy line turns idle) | for a moment: paws up, sparkles, a green tick and "all done!", then the nap. A job that ended on a problem line goes straight to sleep |
 | Napping | (idle) | asleep on its keyboard, Zzz floating up, a moon and stars on the screen |
 
-**Coffee breaks:** every 15 to 35 seconds while it's awake (except while testing, when its paws are on the controller), the kitten lifts its mug, takes a sip with its eyes closed, puts it down and carries on. Now and then the mug turns out to be empty: the kitten peers in, looks annoyed, fetches a kettle, refills the mug and settles back content with a sip of the fresh coffee.
+**Little breaks:** every 15 to 35 seconds while it's awake, the kitten takes a short break from its mood: a sip of coffee, a big stretch, a yawn, or a look around the room. Now and then the mug turns out to be empty: the kitten peers in, looks annoyed, fetches a kettle, refills the mug and settles back content with a sip of the fresh coffee. A break waits for a good moment (between test rounds, after a whiteboard drawing), the mood picks up where it stopped, and a new status line that comes in during a break shows once the break is over.
 
 | Waiting | Problem | Testing |
 |---------|---------|---------|
@@ -138,6 +138,7 @@ Drag the kitten anywhere with the left mouse button; it remembers the spot and o
 | **Color** | a page of portraits, the kitten in each of its 32 coats (tabbies, solids, a tuxedo, pointed, calico and tortoiseshell, and fun ones up to galaxy and rainbow), so you can see a coat before you pick it. Patched coats get new patches each time you pick them |
 | **Size** | a page from 50% to 300%; the kitten resizes at once. **Default** goes back to following your display scaling |
 | **Always on top** | checked keeps the kitten above other windows; unchecked lets them cover it |
+| **Check for Update** | checks for a newer release now; if there is one, the kitten downloads it, checks it and restarts on it, otherwise it tells you it is up to date |
 | **Quit** | closes the kitten |
 
 Monitor, Color and Size slide in as pages with a back button. The keyboard works too: the arrow keys move, Enter or Space picks, Left or Backspace goes back, and Escape goes back or closes the menu. Clicking anywhere else closes it.

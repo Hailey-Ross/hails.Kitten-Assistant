@@ -7,7 +7,20 @@ use std::f32::consts::PI;
 
 use tiny_skia::{Color, Path, Pixmap, Transform};
 
+use crate::brain::{Brain, Event};
 use crate::canvas::*;
+
+#[cfg(test)]
+thread_local! {
+    static ARMS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+}
+
+/// Counts the arms a frame draws (tests check there are never more than two).
+#[inline]
+fn arm_drawn() {
+    #[cfg(test)]
+    ARMS.with(|a| a.set(a.get() + 1));
+}
 
 pub const W: f32 = 300.0;
 pub const H: f32 = 250.0;
@@ -190,6 +203,14 @@ fn key_x(col: usize) -> f32 {
     KX + 3.5 + col as f32 * KEY_PITCH
 }
 
+/// The next 0..1 of a xorshift generator.
+fn xorshift(s: &mut u64) -> f64 {
+    *s ^= *s << 13;
+    *s ^= *s >> 7;
+    *s ^= *s << 17;
+    (*s >> 11) as f64 / (1u64 << 53) as f64
+}
+
 fn hash(n: i64) -> u32 {
     let mut v = (n as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
     v ^= v >> 29;
@@ -199,7 +220,7 @@ fn hash(n: i64) -> u32 {
 }
 
 /// What a busy status line asks for, from its first word.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Mood {
     /// typing away
     Busy,
@@ -498,10 +519,10 @@ fn pad_point(t: f32, x: f32, y: f32) -> (f32, f32) {
 /// Typing screens: scrolling code, progress bars, equalizer, gear, line graph.
 const SCREENS: usize = 5;
 
-/// Seconds a coffee sip takes.
-const SIP_SECS: f64 = 2.4;
-/// Seconds an empty-mug refill takes: lift, nothing there, annoyed, kettle from off the picture, pour, pleased.
-const REFILL_SECS: f64 = 7.0;
+/// How fast the marker travels between strokes (board pixels a second; drawing itself is slower).
+const PEN_SPEED: f32 = 360.0;
+/// Seconds the paws take to move over when the kitten switches what it does.
+const BLEND_SECS: f64 = 0.45;
 
 /// Where the right paw holds the empty mug out for the kettle (mug center), in front of the chest on the left.
 const REFILL_HOLD: (f32, f32) = (78.0, 176.0);
@@ -606,6 +627,12 @@ pub struct Pose {
     anger: f32,
     /// how far into a mouthful (0..1): the mouth opens and the mug tips toward it
     sipping: f32,
+    /// the mood's loop has the paws (no rare event running)
+    free: bool,
+    /// how wide a yawn opens the mouth (0..1)
+    yawn: f32,
+    /// the marker's tip on the whiteboard while drawing
+    pen: Option<(f32, f32)>,
 }
 
 #[derive(Clone, Copy)]
@@ -634,15 +661,19 @@ pub struct Scene {
     rng: u64,
     next_blink: f64,
     next_twitch: f64,
-    /// when the next coffee sip starts, and when the current one started
-    pub next_sip: f64,
-    pub sip_start: f64,
-    /// when the current empty-mug refill started
-    pub refill_start: f64,
+    /// what the kitten does: the mood's loop or a rare event (sip, refill, stretch...)
+    pub brain: Brain,
     twitch_start: f64,
     twitch_ear: f32,
     lpx: f32,
     rpx: f32,
+    /// the activity (mood, event) of the last frame, and the paws it left them in
+    last_act: (Option<Mood>, Option<Event>, u8),
+    last_paws: (Paw, Paw),
+    /// a change of activity eases the paws from where they were (start time, left, right)
+    blend: Option<(f64, Paw, Paw)>,
+    /// the marker's tip while drawing: it follows the stroke, and travels (not jumps) to the next one
+    pen: Option<(f32, f32)>,
     last_t: f64,
     bold: Option<fontdue::Font>,
     regular: Option<fontdue::Font>,
@@ -669,15 +700,17 @@ impl Scene {
             rng: 0x2545_F491_4F6C_DD1D,
             next_blink: 2.0,
             next_twitch: 4.0,
-            next_sip: 10.0,
             coat: COATS[0],
             patch_seed: 1,
-            sip_start: -100.0,
-            refill_start: -100.0,
+            brain: Brain::new(),
             twitch_start: -10.0,
             twitch_ear: 1.0,
             lpx: -1.0,
             rpx: -1.0,
+            last_act: (None, None, 0),
+            last_paws: (Paw { x: CX - 29.0, lift: 0.0, key: None, down: false }, Paw { x: CX + 9.0, lift: 0.0, key: None, down: false }),
+            blend: None,
+            pen: None,
             last_t: 0.0,
             // Windows ships these; the kitten still draws without text if none load.
             bold: load_font(&["seguisb.ttf", "segoeuib.ttf", "arialbd.ttf"]),
@@ -712,12 +745,20 @@ impl Scene {
             fill: 1.0,
             anger: 0.0,
             sipping: 0.0,
+            free: true,
+            yawn: 0.0,
+            pen: None,
         };
         let mut c = Canvas::new_at(pix, sc, cx - CX * sc, cy + 6.0 * sc);
         self.head(&mut c, &p);
     }
 
     /// First line of the status file: text = busy with that, empty or "idle" = nap.
+    #[cfg(test)]
+    fn brain_event(&self) -> Option<Event> {
+        self.last_act.1
+    }
+
     pub fn set_status(&mut self, s: &str, t: f64) {
         self.set_status_aged(s, t, 0.0);
     }
@@ -726,7 +767,9 @@ impl Scene {
     pub fn set_status_aged(&mut self, s: &str, t: f64, age: f64) {
         let s = s.trim();
         let busy = !s.is_empty() && !s.eq_ignore_ascii_case("idle");
-        if busy && (!self.busy || s != self.task) {
+        let new_line = busy && (!self.busy || s != self.task);
+        self.brain.want(busy.then(|| Mood::of(s)), new_line, age);
+        if new_line {
             self.since = t - age.max(0.0);
             // a new screen for the new line, never the same one twice in a row
             let pick = (self.rand() * (SCREENS - 1) as f64) as usize;
@@ -739,7 +782,6 @@ impl Scene {
         }
         if busy {
             self.done_at = -100.0;
-            self.mood = Mood::of(s);
         }
         self.busy = busy;
         self.task = if busy { s.to_string() } else { String::new() };
@@ -779,28 +821,37 @@ impl Scene {
         let twitch = if (0.0..1.0).contains(&tw) { (tw * PI).sin() * 4.0 } else { 0.0 };
 
         let cheer = self.cheer(t);
-        // a sip or refill that has started always finishes, whatever the mood does meanwhile (only sleep ends it),
-        // and while it runs it owns the paws: the mood's own arms (chin, gamepad) wait
-        let rp = ((t - self.refill_start) / REFILL_SECS) as f32;
-        let refill = (busy && (0.0..1.0).contains(&rp)).then_some(rp);
-        // a refill ends with a sip of the fresh coffee
-        let after = ((t - self.refill_start - REFILL_SECS) / SIP_SECS) as f32;
-        let sp = if (0.0..1.0).contains(&after) { after } else { ((t - self.sip_start) / SIP_SECS) as f32 };
-        let sip = (busy && (0.0..1.0).contains(&sp)).then_some(sp);
-        let coffee = sip.is_some() || refill.is_some();
+        // the brain picks what happens: the mood's loop, or a rare event that has the paws until it ends (a status
+        // change meanwhile waits; only sleep ends it). The loop's clock stops during an event, so a drawing or a
+        // test round picks up where it stopped. Events start only where a loop can pause.
+        let rounds = |m: Mood| match m {
+            Mood::Testing => Some((TEST_ROUND, 0.0, 0.3)),
+            Mood::Thinking => Some((PLAN_ROUND, PLAN_DRAW, PLAN_ROUND)),
+            _ => None,
+        };
+        let mut rng = self.rng;
+        let act = self.brain.tick(t, &mut || xorshift(&mut rng), &rounds);
+        self.rng = rng;
+        if let Some(m) = act.mood {
+            self.mood = m;
+        }
+        let ev = |k: Event| act.event.filter(|e| e.0 == k).map(|e| e.1);
+        let (refill, sip, stretch, yawning, looking) =
+            (ev(Event::Refill), ev(Event::Sip), ev(Event::Stretch), ev(Event::Yawn), ev(Event::LookAround));
+        let free = act.event.is_none();
         let typing = busy && self.mood.types();
-        let waiting = busy && self.mood.chin() && refill.is_none();
+        let waiting = busy && self.mood.chin() && free;
         let problem = busy && self.mood == Mood::Problem;
-        let testing = busy && self.mood == Mood::Testing && !coffee;
+        let testing = busy && self.mood == Mood::Testing && free;
         let researching = busy && self.mood == Mood::Researching;
-        let round = (t - self.since).max(0.0) % TEST_ROUND;
+        let round = act.work % TEST_ROUND;
         let notes = (testing && round > TEST_ROUND - NOTES_SECS).then(|| ((round - (TEST_ROUND - NOTES_SECS)) / NOTES_SECS) as f32);
         let planning = busy && self.mood == Mood::Thinking;
         let plan = planning.then(|| {
-            let into = (t - self.since).max(0.0);
+            let into = act.work;
             let k = ((into % PLAN_ROUND) / PLAN_DRAW).min(1.0) as f32;
             // a new drawing every round, different for every status line
-            (k, hash((into / PLAN_ROUND).floor() as i64 * 131 + (self.since * 7.0) as i64))
+            (k, hash((into / PLAN_ROUND).floor() as i64 * 131 + act.line as i64 * 7))
         });
 
         let (hy, sway) = if typing {
@@ -828,8 +879,14 @@ impl Scene {
         // paws: busy = take turns tapping (about five taps a second), moving to a new key
         // while lifted; waiting = one paw taps the desk; cheering = both paws up;
         // otherwise folded on the keyboard under the chin
+        if !free || !plan.is_some_and(|x| x.0 < 1.0) {
+            self.pen = None;
+        }
         let (mut l, mut r);
-        if waiting {
+        if busy && !free {
+            l = Paw { x: CX - 29.0, lift: 0.0, key: None, down: false };
+            r = Paw { x: CX + 9.0, lift: 0.0, key: None, down: false };
+        } else if waiting {
             // chin propped on one paw, the other drumming: three quick taps, then a pause
             l = Paw { x: CX - 30.0, lift: 181.0 - (hy + 17.0), key: None, down: false };
             let beat = tf % 1.6;
@@ -862,7 +919,16 @@ impl Scene {
             r = Paw { x: CX + 9.0, lift: 0.0, key: None, down: false };
         } else if let Some((k, seed)) = plan.filter(|(k, _)| *k < 1.0) {
             // the left paw draws on the whiteboard, the marker's tip 7 left of and 8 above the paw's center
-            let (tx, ty) = plan_strokes(k, seed).1;
+            let goal = plan_strokes(k, seed).1;
+            let (tx, ty) = match self.pen {
+                Some(p0) => {
+                    let (dx, dy) = (goal.0 - p0.0, goal.1 - p0.1);
+                    let (d, step) = ((dx * dx + dy * dy).sqrt(), PEN_SPEED * dt);
+                    if d <= step { goal } else { (p0.0 + dx / d * step, p0.1 + dy / d * step) }
+                }
+                None => goal,
+            };
+            self.pen = Some((tx, ty));
             l = Paw { x: tx + 7.0 - PAW_W / 2.0, lift: 181.0 - (ty + 8.0 - 6.5), key: None, down: false };
             r = Paw { x: CX + 9.0, lift: 0.0, key: None, down: false };
         } else if cheer.is_some() {
@@ -881,36 +947,19 @@ impl Scene {
             l = Paw { x: CX - 29.0, lift: 0.0, key: None, down: false };
             r = Paw { x: CX + 9.0, lift: 0.0, key: None, down: false };
         }
-        // a rare sip of coffee: a short break, then straight back to the mood (not with both paws on a controller)
-        let hands_free = self.mood != Mood::Testing;
-        if busy && t > self.next_sip {
-            if hands_free {
-                // now and then the mug turns out to be empty: a refill instead of a sip
-                if self.rand() < 0.25 {
-                    self.refill_start = t;
-                } else {
-                    self.sip_start = t;
-                }
-            }
-            self.next_sip = t + 15.0 + self.rand() * 20.0;
-        }
         let mug = match refill {
             Some(p) => refill_mug(p, hy),
             None => sip.map_or(MUG_HOME, |p| mug_at(p, hy)),
         };
-        if (sip.is_some() || refill.is_some()) && typing {
-            // the typing paw rests while the other one holds the mug
-            l = Paw { x: CX - 29.0, lift: 0.0, key: None, down: false };
-        }
         if self.lpx < 0.0 {
             self.lpx = l.x;
             self.rpx = r.x;
         }
         let k = 1.0 - (-dt * if typing || testing || planning || cheer.is_some() { 14.0 } else { 4.0 }).exp();
-        if !typing || l.lift > 3.0 {
+        if !typing || !free || l.lift > 3.0 {
             self.lpx += (l.x - self.lpx) * k;
         }
-        if !typing || r.lift > 3.0 {
+        if !typing || !free || r.lift > 3.0 {
             self.rpx += (r.x - self.rpx) * k;
         }
         l.x = self.lpx;
@@ -930,7 +979,8 @@ impl Scene {
         if let Some(p) = refill {
             let grip = |m: (f32, f32)| (m.0 + 2.0, m.1 + 9.5);
             let center = |w: &Paw| (w.x + PAW_W / 2.0, 181.0 - w.lift + 6.5);
-            let (rest_r, rest_l) = (center(&r), center(&l));
+            // where the paws rest during an event (not the smoothed paws, which follow this script)
+            let (rest_r, rest_l) = (center(&Paw { x: CX + 9.0, lift: 0.0, key: None, down: false }), center(&Paw { x: CX - 29.0, lift: 0.0, key: None, down: false }));
             let (off, pour) = ((-30.0, 118.0), (39.0, 138.0));
             let rc = if p < 0.04 {
                 lerp2(rest_r, grip(mug), p / 0.04)
@@ -973,13 +1023,49 @@ impl Scene {
             fill = if p < 0.66 { 0.0 } else { ((p - 0.66) / 0.10).min(1.0) };
             anger = if (0.26..0.55).contains(&p) { 1.0 } else { 0.0 };
         }
-        l.down = typing && sip.is_none() && refill.is_none() && l.lift < 1.0;
-        r.down = typing && sip.is_none() && refill.is_none() && r.lift < 1.0;
+        let bump = |x: f32, a: f32, b: f32, c: f32, d: f32| if x < b { smooth((x - a) / (b - a)) } else if x < c { 1.0 } else { 1.0 - smooth((x - c) / (d - c)) };
+        // a big stretch: both paws up and out, the head back a little
+        let reach = stretch.map_or(0.0, |p| bump(p, 0.0, 0.3, 0.7, 1.0));
+        let mut hy = hy;
+        if stretch.is_some() {
+            let up = |w: Paw, x: f32| Paw { x: w.x + (x - w.x) * reach, lift: w.lift + (104.0 - w.lift) * reach, key: None, down: false };
+            l = up(l, CX - 72.0);
+            r = up(r, CX + 50.0);
+            self.lpx = l.x;
+            self.rpx = r.x;
+            hy -= 4.0 * reach;
+        }
+        let yawn = yawning.map_or(0.0, |p| bump(p, 0.1, 0.35, 0.65, 0.9));
+        // a new activity takes the paws over from where the last one left them
+        // (a loop's own phases count too: drawing or stepping back, playing or taking notes)
+        let phase = u8::from(plan.is_some_and(|x| x.0 < 1.0)) + 2 * u8::from(notes.is_some());
+        let now = (act.mood, act.event.map(|e| e.0), phase);
+        if now != self.last_act {
+            self.last_act = now;
+            self.blend = Some((t, self.last_paws.0, self.last_paws.1));
+        }
+        if let Some((t0, l0, r0)) = self.blend {
+            let w = smooth(((t - t0) / BLEND_SECS) as f32);
+            if w >= 1.0 {
+                self.blend = None;
+            } else {
+                let mix = |a: Paw, b: Paw| Paw { x: a.x + (b.x - a.x) * w, lift: a.lift + (b.lift - a.lift) * w, ..b };
+                l = mix(l0, l);
+                r = mix(r0, r);
+            }
+        }
+        self.last_paws = (l, r);
+        l.down = typing && free && l.lift < 1.0;
+        r.down = typing && free && r.lift < 1.0;
 
         // looks at the screen while typing and glances back at you every so often;
         // while waiting it looks off to the side now and then
         let drinking = sip.is_some_and(|p| (0.38..0.66).contains(&p));
-        let look = if sip.is_some() || refill.is_some() {
+        let look = if let Some(p) = looking {
+            // off to the left, over to the right, back
+            let to = |a: f32, b: f32, x: f32| a + (b - a) * smooth(x.clamp(0.0, 1.0));
+            if p < 0.45 { to(0.0, -9.0, p / 0.15) } else if p < 0.85 { to(-9.0, 9.0, (p - 0.45) / 0.15) } else { to(9.0, 0.0, (p - 0.85) / 0.15) }
+        } else if !free {
             0.0
         } else if typing && (t % 9.0) > 1.3 {
             2.5
@@ -1014,14 +1100,13 @@ impl Scene {
         // content again once the mug is full
         let pleased = refill.is_some_and(|p| p > 0.9);
         // the mouthful: the mug tips and the mouth opens (on the refill's first try too, before it finds the mug empty)
-        let bump = |x: f32, a: f32, b: f32, c: f32, d: f32| if x < b { smooth((x - a) / (b - a)) } else if x < c { 1.0 } else { 1.0 - smooth((x - c) / (d - c)) };
         let sipping = sip.map_or(0.0, |p| bump(p, 0.34, 0.42, 0.60, 0.68)).max(refill.map_or(0.0, |p| 0.8 * bump(p, 0.16, 0.20, 0.25, 0.29)));
 
         Pose {
             hy,
             sway,
             // asleep, or squeezed shut with joy while cheering
-            eyes_closed: !busy || blink || drinking || pleased,
+            eyes_closed: !busy || blink || drinking || pleased || yawn > 0.4 || reach > 0.6,
             look,
             twitch,
             twitch_ear: self.twitch_ear,
@@ -1039,6 +1124,9 @@ impl Scene {
             fill,
             anger,
             sipping,
+            free,
+            yawn,
+            pen: self.pen,
         }
     }
 
@@ -1053,7 +1141,7 @@ impl Scene {
         self.computer(&mut c, tf, p);
         self.body(&mut c, p);
         self.desk(&mut c);
-        let testing = self.busy && self.mood == Mood::Testing && p.sip.is_none() && p.refill.is_none();
+        let testing = self.busy && self.mood == Mood::Testing && p.free;
         if testing {
             self.notepad(&mut c, tf, p);
         }
@@ -1107,18 +1195,19 @@ impl Scene {
         if self.busy && self.mood == Mood::Researching {
             self.glasses(&mut c, p);
         }
-        if let Some((k, seed)) = p.plan.filter(|(k, _)| *k < 1.0 && p.refill.is_none_or(|r| r < 0.40)) {
+        if let Some((k, seed)) = p.plan.filter(|(k, _)| *k < 1.0 && p.free) {
             // the marker in the drawing paw, its tip on the board (put down while the finished drawing is admired)
-            let (tx, ty) = plan_strokes(k, seed).1;
+            let (tx, ty) = p.pen.unwrap_or_else(|| plan_strokes(k, seed).1);
             let (px, py) = (p.l.x + PAW_W / 2.0, 181.0 - p.l.lift + 6.5);
             c.stroke(&line(px, py, tx, ty), INK, 5.0);
             c.stroke(&line(px, py, tx + 1.5, ty + 1.7), Rgba::rgb(60, 110, 200), 3.0);
         }
-        if self.busy && self.mood.chin() && p.refill.is_none() {
+        if self.busy && self.mood.chin() && p.free {
             // chin propped on an upright forearm: elbow on the keyboard, paw cupping the jaw,
             // drawn in front of the head
             let (px, py) = (CX - 33.0, p.hy + 12.0);
             let arm = line(CX - 38.0, KY + 4.0, px + 8.0, py + 9.0);
+            arm_drawn();
             c.stroke(&arm, INK, 14.5);
             c.stroke(&arm, self.coat.fur, 10.5);
             c.blob(&oval(px, py, 18.0, 15.0), self.coat.fur);
@@ -1131,6 +1220,7 @@ impl Scene {
             // the left arm goes behind the mug the right paw holds out (its paw and the kettle come after it)
             let py = 181.0 - p.l.lift;
             let arm = line(CX - 24.0, p.hy + 46.0, p.l.x + PAW_W / 2.0, py + 5.0);
+            arm_drawn();
             c.stroke(&arm, INK, 14.5);
             c.stroke(&arm, self.coat.fur, 10.5);
         }
@@ -1138,6 +1228,7 @@ impl Scene {
             // the arm, paw and mug in front of the head; the paw holds the mug from below
             let py = 181.0 - p.r.lift;
             let arm = line(CX + 24.0, p.hy + 46.0, p.r.x + PAW_W / 2.0, py + 5.0);
+            arm_drawn();
             c.stroke(&arm, INK, 14.5);
             c.stroke(&arm, self.coat.fur, 10.5);
             c.blob(&oval(p.r.x, py, PAW_W, 13.0), self.coat.fur);
@@ -2140,7 +2231,7 @@ impl Scene {
     fn arms(&self, c: &mut Canvas, p: &Pose) {
         let rest_y = if self.busy { 181.0 } else { 179.0 };
         // while waiting the left arm props the chin and is drawn after the head
-        let chin = self.busy && self.mood.chin() && p.refill.is_none();
+        let chin = self.busy && self.mood.chin() && p.free;
         for (paw, sx) in [(p.l, -24.0), (p.r, 24.0)] {
             // the sipping arm is drawn after the head too, so it does not slip under the face
             if p.refill.is_some() || (chin && sx < 0.0) || (p.sip.is_some() && sx > 0.0) {
@@ -2148,6 +2239,7 @@ impl Scene {
             }
             let py = rest_y - paw.lift;
             let arm = line(CX + sx, p.hy + 46.0, paw.x + PAW_W / 2.0, py + 5.0);
+            arm_drawn();
             c.stroke(&arm, INK, 14.5);
             c.stroke(&arm, self.coat.fur, 10.5);
             c.blob(&oval(paw.x, py, PAW_W, 13.0), self.coat.fur);
@@ -2261,7 +2353,12 @@ impl Scene {
         let nose = poly(&[(CX - 4.5, hy + 6.0), (CX + 4.5, hy + 6.0), (CX, hy + 10.5)]);
         c.fill(&nose, self.coat.pink);
         c.stroke(&nose, PINK_DARK, 1.2);
-        if p.sipping > 0.15 {
+        if p.yawn > 0.1 {
+            // a wide yawn
+            let h = 2.0 + 13.0 * p.yawn;
+            c.blob(&oval(CX - 5.5, hy + 11.0, 11.0, h), Rgba::rgb(150, 60, 70));
+            c.fill(&oval(CX - 3.0, hy + 10.0 + h * 0.55, 6.0, h * 0.35), self.coat.pink);
+        } else if p.sipping > 0.15 {
             // open for the mouthful
             let h = 1.5 + 4.5 * p.sipping;
             c.blob(&oval(CX - 3.5, hy + 12.0, 7.0, h), Rgba::rgb(150, 60, 70));
@@ -2365,6 +2462,87 @@ mod bench {
         s
     }
 
+    /// Status lines change at any moment of a sip or refill (other moods, idle and back, new text): no frame ever
+    /// draws more than two arms.
+    #[test]
+    fn never_more_than_two_arms() {
+        let mut pix = Pixmap::new(W as u32, H as u32).unwrap();
+        let mut s = scene("Writing release notes", "Orange tabby");
+        s.brain.next_event = 2.0;
+        let mut rng: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = 0.0;
+        for i in 0..(30 * 60 * 90) {
+            let t = i as f64 / 30.0;
+            if t >= next {
+                rng ^= rng << 13;
+                rng ^= rng >> 7;
+                rng ^= rng << 17;
+                let status = MOODS[(rng % MOODS.len() as u64) as usize];
+                s.set_status(&format!("{status} {}", rng % 3), t);
+                next = t + 0.3 + (rng >> 40) as f64 % 9.0;
+            }
+            let p = s.update(t);
+            ARMS.with(|a| a.set(0));
+            s.render(&mut pix, 1.0, t, &p);
+            let n = ARMS.with(|a| a.get());
+            assert!(n <= 2, "{n} arms at t={t:.2} task={} busy={} sip={:?} refill={:?}", s.task, s.busy, p.sip, p.refill);
+        }
+    }
+
+    /// Paws never jump: across random status changes and events, no paw moves further in one 30 fps frame than
+    /// typing moves it.
+    #[test]
+    fn paws_never_jump() {
+        let mut s = scene("Writing release notes", "Orange tabby");
+        s.brain.next_event = 2.0;
+        let mut rng: u64 = 0x2545_f491_4f6c_dd1d;
+        let (mut next, mut last): (f64, Option<(Paw, Paw)>) = (0.0, None);
+        let mut worst = (0.0f32, String::new());
+        for i in 0..(30 * 60 * 60) {
+            let t = i as f64 / 30.0;
+            if t >= next {
+                let r = xorshift(&mut rng);
+                let status = MOODS[(r * MOODS.len() as f64) as usize];
+                s.set_status(&format!("{status} {}", (r * 1000.0) as u32 % 3), t);
+                next = t + 0.3 + xorshift(&mut rng) * 9.0;
+            }
+            let p = s.update(t);
+            if let Some((l0, r0)) = last {
+                for (a, b) in [(l0, p.l), (r0, p.r)] {
+                    let d = ((a.x - b.x).powi(2) + (a.lift - b.lift).powi(2)).sqrt();
+                    if d > worst.0 {
+                        worst = (d, format!("t={t:.2} task={} event={:?} from=({:.0},{:.0}) to=({:.0},{:.0}) refill={:?} sip={:?}", s.task, s.brain_event(), a.x, a.lift, b.x, b.lift, p.refill, p.sip));
+                    }
+                }
+            }
+            last = Some((p.l, p.r));
+        }
+        eprintln!("PAW_JUMP {:.1} at {}", worst.0, worst.1);
+        assert!(worst.0 <= 16.0, "a paw jumped {:.1} at {}", worst.0, worst.1);
+    }
+
+    /// A rare event pauses the whiteboard drawing: it carries on where it stopped.
+    #[test]
+    fn an_event_pauses_the_drawing() {
+        let mut s = scene("Planning: next release", "Orange tabby");
+        s.brain.next_event = f64::MAX;
+        let mut t = 0.0;
+        while t < PLAN_ROUND + 1.0 {
+            s.update(t);
+            t += 1.0 / 30.0;
+        }
+        let before = s.update(t).plan;
+        s.brain.force(Event::Refill, t);
+        while t < PLAN_ROUND + 1.0 + 9.0 {
+            t += 1.0 / 30.0;
+            let p = s.update(t);
+            assert!(p.plan.map(|x| x.0) == before.map(|x| x.0) || !p.free || p.plan.unwrap().0 > before.unwrap().0);
+            if !p.free {
+                assert_eq!(p.plan.map(|x| x.0), before.map(|x| x.0), "the drawing moved during the event at t={t:.2}");
+            }
+        }
+    }
+
     /// Milliseconds per frame per mood: cargo test --release -- --ignored --nocapture frame_cost.
     #[test]
     #[ignore]
@@ -2429,7 +2607,7 @@ mod bench {
         for coat in ["Orange tabby", "Calico", "Galaxy"] {
             for status in MOODS {
                 let mut s = scene(status, coat);
-                s.next_sip = 3.0;
+                s.brain.next_event = 3.0;
                 for i in 0..900 {
                     let t = i as f64 / 30.0;
                     let p = s.update(t);
