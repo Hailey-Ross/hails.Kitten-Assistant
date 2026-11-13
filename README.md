@@ -138,7 +138,7 @@ Drag the kitten anywhere with the left mouse button; it remembers the spot and o
 | **Color** | a page of portraits, the kitten in each of its 32 coats (tabbies, solids, a tuxedo, pointed, calico and tortoiseshell, and fun ones up to galaxy and rainbow), so you can see a coat before you pick it. Patched coats get new patches each time you pick them |
 | **Size** | a page from 50% to 300%; the kitten resizes at once. **Default** goes back to following your display scaling |
 | **Always on top** | checked keeps the kitten above other windows; unchecked lets them cover it |
-| **Check for Update** | checks for a newer release now; if there is one, the kitten downloads it, checks it and restarts on it, otherwise it tells you it is up to date |
+| **Check for Update** | checks for a newer release now; if there is one, the kitten downloads it, checks it and restarts on it, otherwise it cheers with "up to date" and a green tick on its screen |
 | **Quit** | closes the kitten |
 
 Monitor, Color and Size slide in as pages with a back button. The keyboard works too: the arrow keys move, Enter or Space picks, Left or Backspace goes back, and Escape goes back or closes the menu. Clicking anywhere else closes it.

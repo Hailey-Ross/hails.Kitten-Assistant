@@ -396,7 +396,8 @@ for that project only), and make sure the assistant can run
   rate, and never takes the focus.
 - **Check for an update now:** right-click the kitten and click **Check for Update**. A newer
   release is downloaded, checked and started in place of the old one (the kitten restarts);
-  otherwise a message says it is up to date. A development build says it does not update.
+  otherwise the kitten cheers for 3 seconds with "up to date" and a green tick drawing itself on the computer screen,
+  whatever it was doing. A development build says it does not update.
 - **Always on top on or off:** right-click the kitten and click **Always on top**. A check
   mark means on. Off lets other windows cover the kitten (click the desktop or minimize them
   to see it again). The choice is saved in `kitten-assistant.ini` (`always_on_top=0` or `1`)

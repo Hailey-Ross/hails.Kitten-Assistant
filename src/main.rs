@@ -63,6 +63,7 @@ struct Opts {
     hover: Option<usize>,
     refill: Option<f64>,
     event: Option<String>,
+    uptodate: Option<f64>,
     coat: Option<String>,
     seed: Option<u32>,
 }
@@ -88,6 +89,7 @@ fn parse() -> Result<Opts, String> {
             "--egg" => o.egg = true,
             "--menu" => o.menu = Some(val()?),
             "--event" => o.event = Some(val()?),
+        "--uptodate" => o.uptodate = Some(val()?.parse().map_err(|_| "bad --uptodate")?),
         "--refill" => o.refill = Some(val()?.parse().map_err(|_| "bad --refill")?),
             "--hover" => o.hover = Some(val()?.parse().map_err(|_| "bad --hover")?),
             "--coat" => o.coat = Some(val()?),
@@ -261,6 +263,10 @@ fn snapshot(o: &Opts) -> Result<(), String> {
     // --refill P: that moment (0..1) of an empty-mug refill (not in the usage text)
     if let Some(p) = o.refill {
         s.brain.force(brain::Event::Refill, t_end - p * 7.0);
+    }
+    // --uptodate P: that moment (0..1) of the "up to date" cheer (not in the usage text)
+    if let Some(p) = o.uptodate {
+        s.show_up_to_date(t_end - p * 3.0);
     }
     // --event NAME@P: that moment of a rare event (stretch, yawn, look; not in the usage text)
     if let Some((name, p)) = o.event.as_deref().and_then(|e| e.split_once('@')) {
@@ -960,6 +966,13 @@ mod win {
                 start_update_checks(hwnd, false);
                 0
             }
+            WM_UP_TO_DATE => {
+                with_app(|a| {
+                    let t = a.t();
+                    a.scene.show_up_to_date(t);
+                });
+                0
+            }
             WM_DESTROY => {
                 PostQuitMessage(0);
                 0
@@ -973,6 +986,8 @@ mod win {
     const WM_UPDATE_READY: u32 = WM_APP + 1;
     /// `kitten-assistant update` asks the running kitten to check now.
     const WM_UPDATE_CHECK: u32 = WM_APP + 2;
+    /// A manual check found nothing newer (posted by the update thread): the kitten shows "up to date".
+    const WM_UP_TO_DATE: u32 = WM_APP + 3;
     static MUTEX: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
     /// Release builds only; off with `auto_update=0` in kitten-assistant.ini.
@@ -1021,7 +1036,10 @@ mod win {
                 log(&format!("update {tag} downloaded and verified (running {})", update::label()));
                 unsafe { PostMessageW(at as HWND, WM_UPDATE_READY, 0, 0) };
             }
-            Ok(None) => message(&format!("Kitten Assistant {} is up to date.", update::label())),
+            Ok(None) => {
+                log(&format!("update check: {} is up to date", update::label()));
+                unsafe { PostMessageW(at as HWND, WM_UP_TO_DATE, 0, 0) };
+            }
             Err(e) => {
                 log(&format!("update check: {e}"));
                 message(&format!("Could not check for updates: {e}"));

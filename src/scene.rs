@@ -592,6 +592,8 @@ fn mug_at(p: f32, hy: f32) -> (f32, f32) {
 
 /// Seconds the "all done!" moment lasts after busy turns idle.
 const CHEER_SECS: f64 = 2.5;
+/// Seconds of the "up to date" moment after a manual update check finds nothing newer.
+const UP_TO_DATE_SECS: f64 = 3.0;
 
 /// Per-frame pose worked out by `update`.
 pub struct Pose {
@@ -633,6 +635,8 @@ pub struct Pose {
     yawn: f32,
     /// the marker's tip on the whiteboard while drawing
     pen: Option<(f32, f32)>,
+    /// 0..1 through the "up to date" moment, None outside it
+    up_to_date: Option<f32>,
 }
 
 #[derive(Clone, Copy)]
@@ -658,6 +662,8 @@ pub struct Scene {
     pub since: f64,
     /// time the last job finished (busy -> idle), for the "all done!" moment
     pub done_at: f64,
+    /// when a manual update check last found the kitten up to date
+    pub up_to_date_at: f64,
     rng: u64,
     next_blink: f64,
     next_twitch: f64,
@@ -697,6 +703,7 @@ impl Scene {
             egg: false,
             since: 0.0,
             done_at: -100.0,
+            up_to_date_at: -100.0,
             rng: 0x2545_F491_4F6C_DD1D,
             next_blink: 2.0,
             next_twitch: 4.0,
@@ -745,6 +752,7 @@ impl Scene {
             fill: 1.0,
             anger: 0.0,
             sipping: 0.0,
+            up_to_date: None,
             free: true,
             yawn: 0.0,
             pen: None,
@@ -787,6 +795,12 @@ impl Scene {
         self.task = if busy { s.to_string() } else { String::new() };
     }
 
+    /// A manual update check found nothing newer: the done moment's cheer with "up to date" on the screen, whatever
+    /// the mood.
+    pub fn show_up_to_date(&mut self, t: f64) {
+        self.up_to_date_at = t;
+    }
+
     fn cheer(&self, t: f64) -> Option<f32> {
         let p = (t - self.done_at) / CHEER_SECS;
         (!self.busy && (0.0..1.0).contains(&p)).then_some(p as f32)
@@ -820,7 +834,11 @@ impl Scene {
         let tw = ((t - self.twitch_start) / 0.22) as f32;
         let twitch = if (0.0..1.0).contains(&tw) { (tw * PI).sin() * 4.0 } else { 0.0 };
 
-        let cheer = self.cheer(t);
+        let up = {
+            let k = (t - self.up_to_date_at) / UP_TO_DATE_SECS;
+            (0.0..1.0).contains(&k).then_some(k as f32)
+        };
+        let cheer = up.or(self.cheer(t));
         // the brain picks what happens: the mood's loop, or a rare event that has the paws until it ends (a status
         // change meanwhile waits; only sleep ends it). The loop's clock stops during an event, so a drawing or a
         // test round picks up where it stopped. Events start only where a loop can pause.
@@ -951,6 +969,13 @@ impl Scene {
             Some(p) => refill_mug(p, hy),
             None => sip.map_or(MUG_HOME, |p| mug_at(p, hy)),
         };
+        let hy = if up.is_some() { 124.0 - 5.0 * (tf * 2.0 * PI * 1.6).sin().abs() } else { hy };
+        if up.is_some() {
+            // the "up to date" cheer takes the paws whatever the mood is doing
+            let wave = 3.0 * (tf * 2.0 * PI * 1.6).sin();
+            l = Paw { x: CX - 50.0, lift: 46.0 + wave, key: None, down: false };
+            r = Paw { x: CX + 30.0, lift: 46.0 - wave, key: None, down: false };
+        }
         if self.lpx < 0.0 {
             self.lpx = l.x;
             self.rpx = r.x;
@@ -1127,6 +1152,7 @@ impl Scene {
             free,
             yawn,
             pen: self.pen,
+            up_to_date: up,
         }
     }
 
@@ -1152,7 +1178,8 @@ impl Scene {
         }
         // the keyboard is put away while testing: the gamepad is held in front of the arms, the paws wrapped over
         // its grips
-        if !testing {
+        // the keyboard stays put away for the whole testing mood, its breaks included
+        if !(self.busy && self.mood == Mood::Testing) {
             self.keyboard(&mut c, p);
         }
         self.arms(&mut c, p);
@@ -1865,7 +1892,7 @@ impl Scene {
     }
 
     fn computer(&self, c: &mut Canvas, t: f32, p: &Pose) {
-        let mood = if self.busy { Some(self.mood) } else { None };
+        let mood = if self.busy && p.up_to_date.is_none() { Some(self.mood) } else { None };
         // stand
         c.blob(&rrect(229.0, 196.0, 18.0, 9.0, 2.0), CASE_SHADE);
         c.blob(&rrect(213.0, 202.0, 50.0, 8.0, 4.0), CASE);
@@ -1932,6 +1959,22 @@ impl Scene {
             let a = if (t * 2.0).fract() < 0.5 { 1.0 } else { 0.55 };
             c.stroke(&line(226.0, 139.0, 250.0, 163.0), RED.fade(a), 5.0);
             c.stroke(&line(250.0, 139.0, 226.0, 163.0), RED.fade(a), 5.0);
+        } else if let Some(k) = p.up_to_date {
+            // "up to date": the tick draws itself in, then the words
+            let tick = [(224.0, 141.0), (234.0, 151.0), (254.0, 129.0)];
+            let drawn = smooth((k * 3.0).min(1.0));
+            let first = (drawn / 0.35).min(1.0);
+            let mut pts = vec![tick[0], (tick[0].0 + (tick[1].0 - tick[0].0) * first, tick[0].1 + (tick[1].1 - tick[0].1) * first)];
+            if drawn > 0.35 {
+                let u = (drawn - 0.35) / 0.65;
+                pts.push((tick[1].0 + (tick[2].0 - tick[1].0) * u, tick[1].1 + (tick[2].1 - tick[1].1) * u));
+            }
+            c.stroke(&polyline(&pts), GREEN, 5.0 + 0.6 * (k * 18.0).sin().max(0.0) * drawn);
+            if let Some(font) = self.bold.as_ref().filter(|_| k > 0.3) {
+                let text = "up to date";
+                let w = measure(font, 11.0, text);
+                c.text(font, 11.0, 238.0 - w / 2.0, 172.0, text, GREEN.fade(((k - 0.3) / 0.15).min(1.0)));
+            }
         } else if mood.is_none() && p.cheer.is_some() {
             // a big green tick
             c.stroke(&polyline(&[(224.0, 151.0), (234.0, 161.0), (254.0, 139.0)]), GREEN, 5.0);
@@ -2413,7 +2456,7 @@ impl Scene {
             };
             (self.task.clone(), Some(sub))
         } else if p.cheer.is_some() {
-            ("all done!".to_string(), None)
+            (if p.up_to_date.is_some() { "up to date!" } else { "all done!" }.to_string(), None)
         } else {
             ("napping... no jobs right now".to_string(), None)
         };
