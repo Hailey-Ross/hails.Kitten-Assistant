@@ -68,6 +68,9 @@ struct Opts {
     uptodate: Option<f64>,
     coat: Option<String>,
     seed: Option<u32>,
+    greet: Option<String>,
+    frames: Option<u32>,
+    fps: Option<f64>,
 }
 
 fn parse() -> Result<Opts, String> {
@@ -97,6 +100,9 @@ fn parse() -> Result<Opts, String> {
             "--hover" => o.hover = Some(val()?.parse().map_err(|_| "bad --hover")?),
             "--coat" => o.coat = Some(val()?),
             "--seed" => o.seed = Some(val()?.parse().map_err(|_| "bad --seed")?),
+            "--greet" => o.greet = Some(val()?),
+            "--frames" => o.frames = Some(val()?.parse().map_err(|_| "bad --frames")?),
+            "--fps" => o.fps = Some(val()?.parse().ok().filter(|f: &f64| *f > 0.0).ok_or("bad --fps")?),
             "--screen" => o.screen = Some(val()?.parse().map_err(|_| "bad --screen")?),
             "-h" | "--help" | "help" => return Err(USAGE.into()),
             _ if a.starts_with("--") => return Err(format!("unknown option {a}\n\n{USAGE}")),
@@ -276,6 +282,15 @@ fn snapshot(o: &Opts) -> Result<(), String> {
     if let Some(p) = o.uptodate {
         s.show_up_to_date(t_end - p * 3.0);
     }
+    // --greet "TEXT|SECOND LINE": the hello wave, looping, with that text in the bubble (greeting cards and GIFs, see
+    // tools\greeting-gif.ps1; not in the usage text)
+    if let Some(g) = o.greet.as_deref() {
+        let (text, sub) = match g.split_once('|') {
+            Some((a, b)) => (a.trim(), Some(b.trim()).filter(|b| !b.is_empty())),
+            None => (g.trim(), None),
+        };
+        s.greet_forever(0.0, text, sub);
+    }
     // --event NAME@P: that moment of a rare event (stretch, yawn, look; not in the usage text)
     if let Some((name, p)) = o.event.as_deref().and_then(|e| e.split_once('@')) {
         let e = match name {
@@ -308,18 +323,43 @@ fn snapshot(o: &Opts) -> Result<(), String> {
         }
         t = (t + 1.0 / 30.0).min(t_end);
     };
-    s.render(&mut pix, sc, t_end, &pose);
-    let img = match &o.bg {
+    let bg = match &o.bg {
         Some(hex) => {
             let v = u32::from_str_radix(hex.trim_start_matches('#'), 16).map_err(|_| "bad --bg")?;
-            let mut bg = Pixmap::new(w, h).ok_or("pixmap")?;
-            bg.fill(tiny_skia::Color::from_rgba8((v >> 16) as u8, (v >> 8) as u8, v as u8, 255));
-            bg.draw_pixmap(0, 0, pix.as_ref(), &tiny_skia::PixmapPaint::default(), tiny_skia::Transform::identity(), None);
-            bg
+            Some(tiny_skia::Color::from_rgba8((v >> 16) as u8, (v >> 8) as u8, v as u8, 255))
         }
-        None => pix,
+        None => None,
     };
-    img.save_png(&out).map_err(|e| e.to_string())
+    let save = |pix: &mut Pixmap, t: f64, pose: &scene::Pose, path: &str, s: &scene::Scene| -> Result<(), String> {
+        pix.fill(tiny_skia::Color::TRANSPARENT);
+        s.render(pix, sc, t, pose);
+        let img = match bg {
+            Some(col) => {
+                let mut b = Pixmap::new(w, h).ok_or("pixmap")?;
+                b.fill(col);
+                b.draw_pixmap(0, 0, pix.as_ref(), &tiny_skia::PixmapPaint::default(), tiny_skia::Transform::identity(), None);
+                b
+            }
+            None => pix.clone(),
+        };
+        img.save_png(path).map_err(|e| e.to_string())
+    };
+    // --frames N: N frames from --time on, --fps apart (default 25), as OUT-0000.png, OUT-0001.png... (not in the usage
+    // text)
+    let Some(n) = o.frames else {
+        return save(&mut pix, t_end, &pose, &out, &s);
+    };
+    let step = 1.0 / o.fps.unwrap_or(25.0);
+    let stem = out.strip_suffix(".png").unwrap_or(&out).to_string();
+    let mut pose = pose;
+    for i in 0..n {
+        let t = t_end + i as f64 * step;
+        if i > 0 {
+            pose = s.update(t);
+        }
+        save(&mut pix, t, &pose, &format!("{stem}-{i:04}.png"), &s)?;
+    }
+    Ok(())
 }
 
 mod win {
@@ -1201,6 +1241,8 @@ mod win {
             let mut scene = scene::Scene::new();
             scene.coat = scene::Coat::named(&setting("coat").unwrap_or_default());
             scene.patch_seed = setting("coat_seed").and_then(|v| v.parse().ok()).unwrap_or(1);
+            // a hello wave every time it starts (the status shows once it is done)
+            scene.greet(0.0);
             let mut app = App {
                 hwnd,
                 scene,

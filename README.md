@@ -9,7 +9,7 @@
   <a href="https://github.com/Hailey-Ross/hails.Kitten-Assistant/releases/latest"><img src="https://img.shields.io/github/v/release/Hailey-Ross/hails.Kitten-Assistant?label=latest%20release" alt="Latest release"></a>
 </p>
 
-Kitten Assistant is a tiny desktop buddy for Windows. A kitten sits at a little computer on top of your taskbar and acts out whatever your background jobs are doing: it types while a build runs, waits with its chin on a paw, frowns when something fails, cheers when a job is done and naps when nothing is running. A speech bubble shows the current status line and how long it has been going.
+Kitten Assistant is a tiny desktop buddy for Windows. A kitten sits at a little computer on top of your taskbar and acts out whatever your background jobs are doing: it types while a build runs, waits with its chin on a paw, frowns when something fails, cheers when a job is done and naps when nothing is running. Every time it starts, it waves hello first. A speech bubble shows the current status line and how long it has been going.
 
 Why? Long jobs (builds, renders, test runs, backups, scripts) give no sign of life while they work in the background. Anything that can write one line of text can drive the kitten, so a glance at the corner of the screen tells you whether something is still running.
 
@@ -232,6 +232,23 @@ kitten-assistant snapshot nap.png --bg 6a8caf
 ```
 
 `--time SECONDS` picks the animation moment and `--scale N` the size (default 2). `--screen N` picks the mood's screen 0-7 (typing: 0 code, 1 progress bars, 2 equalizer, 3 gear, 4 graph), `--sip` draws a coffee sip, `--coat NAME` picks a color (for example `--coat "Gray tabby"`) and `--seed N` moves the patches on patched coats. Leave out `--bg` for a transparent PNG.
+
+### A greeting GIF
+
+`tools\greeting-gif.ps1` makes a looping GIF of the kitten waving hello with your own words in its bubble, for a GitHub profile, a website or a chat. It uses your kitten's coat unless you pick one, and needs ffmpeg.
+
+```
+powershell -File tools\greeting-gif.ps1 -Text "Hi, welcome to my GitHub!" -Sub "make yourself at home" -Out greeting.gif
+```
+
+GIFs have no soft see-through edges, so `-Background` should match the page: `0d1117` (the default) for GitHub's dark theme, `ffffff` for its light one. A README can show the right one for each theme:
+
+```html
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="greeting-dark.gif">
+  <img src="greeting-light.gif" alt="A kitten at a little computer waving hello">
+</picture>
+```
 
 ## License
 

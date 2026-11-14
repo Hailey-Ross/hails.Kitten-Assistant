@@ -619,6 +619,10 @@ fn mug_at(p: f32, hy: f32) -> (f32, f32) {
 const CHEER_SECS: f64 = 2.5;
 /// Seconds of the "up to date" moment after a manual update check finds nothing newer.
 const UP_TO_DATE_SECS: f64 = 3.0;
+/// Seconds the hello wave lasts when the kitten starts.
+const GREET_SECS: f64 = 3.5;
+/// A looping greeting repeats every this many seconds (the wave, the bob, the sway, the blink all fit it).
+pub const GREET_LOOP: f64 = 4.0;
 
 /// Per-frame pose worked out by `update`.
 pub struct Pose {
@@ -662,6 +666,8 @@ pub struct Pose {
     pen: Option<(f32, f32)>,
     /// 0..1 through the "up to date" moment, None outside it
     up_to_date: Option<f32>,
+    /// seconds into the hello wave, None outside it
+    greet: Option<f32>,
 }
 
 #[derive(Clone, Copy)]
@@ -693,6 +699,11 @@ pub struct Scene {
     pub done_at: f64,
     /// when a manual update check last found the kitten up to date
     pub up_to_date_at: f64,
+    /// the hello wave: when it started, how long it lasts (infinite for a looping greeting card) and the bubble's
+    /// text with an optional smaller second line (None: a plain hello)
+    greet_at: f64,
+    greet_secs: f64,
+    greet_text: Option<(String, Option<String>)>,
     rng: u64,
     next_blink: f64,
     next_twitch: f64,
@@ -740,6 +751,9 @@ impl Scene {
             since: 0.0,
             done_at: -100.0,
             up_to_date_at: -100.0,
+            greet_at: -100.0,
+            greet_secs: GREET_SECS,
+            greet_text: None,
             rng: 0x2545_F491_4F6C_DD1D,
             next_blink: 2.0,
             next_twitch: 4.0,
@@ -792,6 +806,7 @@ impl Scene {
             anger: 0.0,
             sipping: 0.0,
             up_to_date: None,
+            greet: None,
             free: true,
             yawn: 0.0,
             pen: None,
@@ -853,6 +868,19 @@ impl Scene {
         self.up_to_date_at = t;
     }
 
+    /// The hello wave the kitten gives when it starts: a paw up beside the head, a "hi!" in the bubble.
+    pub fn greet(&mut self, t: f64) {
+        self.greet_at = t;
+    }
+
+    /// A greeting that never ends (a greeting card or a GIF): `text` in the bubble, an optional `sub` line under it.
+    /// It repeats exactly every `GREET_LOOP` seconds, blinks and ear flicks included.
+    pub fn greet_forever(&mut self, t: f64, text: &str, sub: Option<&str>) {
+        self.greet_at = t;
+        self.greet_secs = f64::INFINITY;
+        self.greet_text = Some((text.to_string(), sub.map(str::to_string)));
+    }
+
     fn cheer(&self, t: f64) -> Option<f32> {
         let p = (t - self.done_at) / CHEER_SECS;
         (!self.busy && (0.0..1.0).contains(&p)).then_some(p as f32)
@@ -871,17 +899,28 @@ impl Scene {
         let busy = self.busy;
         let tf = t as f32;
 
+        let greeting = {
+            let k = t - self.greet_at;
+            (k >= 0.0 && k < self.greet_secs).then_some(k as f32)
+        };
+        // a looping greeting blinks and flicks an ear at fixed moments of its loop, so it repeats exactly
+        let looping = greeting.is_some() && self.greet_secs.is_infinite();
+
         // blinks every few seconds
         if t > self.next_blink + 0.13 {
             self.next_blink = t + 2.5 + self.rand() * 4.0;
         }
-        let blink = t >= self.next_blink && t <= self.next_blink + 0.13;
+        let blink = if looping { (2.2..2.33).contains(&(t % GREET_LOOP)) } else { t >= self.next_blink && t <= self.next_blink + 0.13 };
 
         // an ear flicks now and then
         if t > self.next_twitch {
             self.twitch_start = t;
             self.twitch_ear = if self.rand() < 0.5 { -1.0 } else { 1.0 };
             self.next_twitch = t + 4.0 + self.rand() * 6.0;
+        }
+        if looping {
+            self.twitch_start = t - (t % GREET_LOOP - 0.9);
+            self.twitch_ear = 1.0;
         }
         let tw = ((t - self.twitch_start) / 0.22) as f32;
         let twitch = if (0.0..1.0).contains(&tw) { (tw * PI).sin() * 4.0 } else { 0.0 };
@@ -908,8 +947,9 @@ impl Scene {
         let ev = |k: Event| act.event.filter(|e| e.0 == k).map(|e| e.1);
         let (refill, sip, stretch, yawning, looking) =
             (ev(Event::Refill), ev(Event::Sip), ev(Event::Stretch), ev(Event::Yawn), ev(Event::LookAround));
-        let free = act.event.is_none();
-        let typing = busy && self.mood.types();
+        // the hello wave has the paws and the face like an event does
+        let free = act.event.is_none() && greeting.is_none();
+        let typing = busy && self.mood.types() && greeting.is_none();
         let waiting = busy && self.mood.chin() && free;
         let problem = busy && self.mood == Mood::Problem;
         let testing = busy && self.mood == Mood::Testing && free;
@@ -1028,6 +1068,16 @@ impl Scene {
             l = Paw { x: CX - 50.0, lift: CHEER_LIFT + wave, key: None, down: false };
             r = Paw { x: CX + 30.0, lift: CHEER_LIFT - wave, key: None, down: false };
         }
+        // the hello wave: a gentle bob, the left paw on the keys, the right one up beside the head waving side to
+        // side twice a second (every motion repeats within GREET_LOOP)
+        let (hy, sway) = if greeting.is_some() { (129.0 + 1.2 * (tf * PI).sin(), 4.0 * (tf * PI / 2.0).sin()) } else { (hy, sway) };
+        if greeting.is_some() {
+            let wave = (tf * 2.0 * PI * 2.0).sin();
+            l = Paw { x: CX - 29.0, lift: 0.0, key: None, down: false };
+            r = Paw { x: CX + 50.0 + 6.0 * wave, lift: 74.0 + 3.0 * wave.abs(), key: None, down: false };
+            self.lpx = l.x;
+            self.rpx = r.x;
+        }
         if self.lpx < 0.0 {
             self.lpx = l.x;
             self.rpx = r.x;
@@ -1115,7 +1165,7 @@ impl Scene {
         let yawn = yawning.map_or(0.0, |p| bump(p, 0.1, 0.35, 0.65, 0.9));
         // a new activity takes the paws over from where the last one left them
         // (a loop's own phases count too: drawing or stepping back, playing or taking notes)
-        let phase = u8::from(plan.is_some_and(|x| x.0 < 1.0)) + 2 * u8::from(notes.is_some());
+        let phase = u8::from(plan.is_some_and(|x| x.0 < 1.0)) + 2 * u8::from(notes.is_some()) + 4 * u8::from(greeting.is_some());
         let now = (act.mood, act.event.map(|e| e.0), phase);
         if now != self.last_act {
             self.last_act = now;
@@ -1196,7 +1246,7 @@ impl Scene {
         let [hy, sway, droop] = head;
         // the eyes follow where they should be: lids come down before they shut (nap, sip, yawn, stretch, the pleased
         // full mug) and lift again after; a blink stays quick
-        let close = if busy { 0.0 } else { 1.0f32 }
+        let close = if busy || greeting.is_some() { 0.0 } else { 1.0f32 }
             .max(sip.map_or(0.0, |p| bump(p, 0.26, 0.38, 0.66, 0.76)))
             .max(if pleased { 1.0 } else { 0.0 })
             .max(yawn)
@@ -1204,6 +1254,10 @@ impl Scene {
         let k = 1.0 - (-dt * 12.0).exp();
         for (e, goal) in self.eyes.iter_mut().zip([look, lid, close]) {
             *e += (goal - *e) * k;
+            // land on the goal: a lid that is almost open would still draw its flat edge over the eye
+            if (goal - *e).abs() < 0.01 {
+                *e = goal;
+            }
         }
         let [look, lid, close] = self.eyes;
 
@@ -1233,6 +1287,7 @@ impl Scene {
             yawn,
             pen: self.pen,
             up_to_date: up,
+            greet: greeting,
         }
     }
 
@@ -1364,6 +1419,8 @@ impl Scene {
         self.sparkles(&mut c, p);
         if let Some(k) = p.cheer {
             self.confetti(&mut c, tf, k, p);
+        } else if p.greet.is_some() {
+            // awake and saying hello: no dots, no z's
         } else if self.busy && self.mood == Mood::Waiting {
             // "..." beside the head, the dots lighting up one by one
             let step = (tf * 2.2) as i64 % 4;
@@ -1948,7 +2005,7 @@ impl Scene {
     }
 
     fn computer(&self, c: &mut Canvas, t: f32, p: &Pose) {
-        let mood = if self.busy && p.up_to_date.is_none() { Some(self.mood) } else { None };
+        let mood = if self.busy && p.up_to_date.is_none() && p.greet.is_none() { Some(self.mood) } else { None };
         // stand
         c.blob(&rrect(229.0, 196.0, 18.0, 9.0, 2.0), CASE_SHADE);
         c.blob(&rrect(213.0, 202.0, 50.0, 8.0, 4.0), CASE);
@@ -1966,7 +2023,7 @@ impl Scene {
             Some(Mood::Waiting | Mood::Thinking) => Rgba::rgb(255, 186, 84).fade(breathe(4.0)),
             Some(Mood::Problem) => RED.fade(if (t * 2.0).fract() < 0.5 { 1.0 } else { 0.3 }),
             Some(Mood::Testing | Mood::Researching) => CODE[1].fade(breathe(3.0)),
-            None if p.cheer.is_some() => GREEN,
+            None if p.cheer.is_some() || p.greet.is_some() => GREEN,
             None => Rgba::rgb(255, 186, 84).fade(breathe(1.5)),
         };
         c.fill(&circle(277.0, 191.0, 2.8), led);
@@ -1977,14 +2034,14 @@ impl Scene {
         let bg = match mood {
             Some(Mood::Problem) => SCREEN_BAD,
             Some(_) => SCREEN_ON,
-            None if p.cheer.is_some() => SCREEN_ON,
+            None if p.cheer.is_some() || p.greet.is_some() => SCREEN_ON,
             None => SCREEN_OFF,
         };
         c.fill(&screen, bg);
         c.clip(Some(&screen));
         let look = self.looks[look_slot(mood)];
         let cheering = mood.is_none() && p.cheer.is_some();
-        let other = mood != Some(Mood::Busy) && !cheering && p.up_to_date.is_none();
+        let other = mood != Some(Mood::Busy) && !cheering && p.up_to_date.is_none() && p.greet.is_none();
         if other && self.egg {
             self.mood_egg(c, t, mood, self.egg_pick);
         } else if other && look > 0 {
@@ -2022,6 +2079,24 @@ impl Scene {
             let a = if (t * 2.0).fract() < 0.5 { 1.0 } else { 0.55 };
             c.stroke(&line(226.0, 139.0, 250.0, 163.0), RED.fade(a), 5.0);
             c.stroke(&line(250.0, 139.0, 226.0, 163.0), RED.fade(a), 5.0);
+        } else if p.greet.is_some() {
+            // hello: a heart beating once a second over the word
+            let beat = t % 1.0;
+            let s = 1.0 + if beat < 0.3 { 0.18 * (beat / 0.3 * PI).sin() } else { 0.0 };
+            let (hx, hy, r) = (238.0, 143.0, 6.5 * s);
+            let heart = poly(&(0..48).map(|i| {
+                let a = i as f32 / 48.0 * 2.0 * PI;
+                // the classic heart curve, scaled to `r`
+                let x = 16.0 * a.sin().powi(3);
+                let y = 13.0 * a.cos() - 5.0 * (2.0 * a).cos() - 2.0 * (3.0 * a).cos() - (4.0 * a).cos();
+                (hx + x * r / 16.0, hy - y * r / 16.0)
+            }).collect::<Vec<_>>());
+            c.fill(&heart, CODE[1]);
+            if let Some(font) = self.bold.as_ref() {
+                let text = "hello!";
+                let w = measure(font, 11.0, text);
+                c.text(font, 11.0, 238.0 - w / 2.0, 172.0, text, WHITE);
+            }
         } else if let Some(k) = p.up_to_date {
             // "up to date": the tick draws itself in, then the words
             let tick = [(224.0, 141.0), (234.0, 151.0), (254.0, 129.0)];
@@ -2496,7 +2571,12 @@ impl Scene {
 
     fn bubble(&self, c: &mut Canvas, t: f64, p: &Pose) {
         let (Some(bold), Some(regular)) = (self.bold.as_ref(), self.regular.as_ref()) else { return };
-        let (main, sub) = if self.busy {
+        let (main, sub) = if p.greet.is_some() {
+            match &self.greet_text {
+                Some((text, sub)) => (text.clone(), sub.clone()),
+                None => ("hi! nice to see you".to_string(), None),
+            }
+        } else if self.busy {
             let m = ((t - self.since) / 60.0).max(0.0) as i64;
             let (start, so_far) = if self.mood == Mood::Waiting { ("just started", "waiting") } else { ("just started", "so far") };
             let sub = match m {
@@ -2519,7 +2599,8 @@ impl Scene {
         let bottom = 68.0;
         let by = bottom - bh;
         let bx = (CX - bw * 0.32).clamp(4.0, W - 4.0 - bw);
-        let fill = WHITE.fade(if self.busy || p.cheer.is_some() { 0.98 } else { 0.86 });
+        let awake = self.busy || p.cheer.is_some() || p.greet.is_some();
+        let fill = WHITE.fade(if awake { 0.98 } else { 0.86 });
 
         let body = rrect(bx, by, bw, bh, 11.0);
         c.fill(&body, fill);
@@ -2529,7 +2610,7 @@ impl Scene {
         c.stroke(&line(CX - 13.0, bottom, tip.0, tip.1), INK, 1.8);
         c.stroke(&line(tip.0, tip.1, CX + 2.0, bottom), INK, 1.8);
 
-        let col = if self.busy || p.cheer.is_some() { INK } else { SUB };
+        let col = if awake { INK } else { SUB };
         for (i, l) in lines.iter().enumerate() {
             c.text(bold, ms, bx + 12.0, by + 8.0 + 12.0 + i as f32 * lh, l, col);
         }
@@ -2670,6 +2751,24 @@ mod bench {
         assert!(worst[0] <= 3.0 && worst[1] <= 3.0 && worst[2] <= 3.5 && worst[3] <= 0.4, "{worst:?}");
     }
 
+    /// Wide-awake eyes have no lid over them: the lids that follow their target land fully open (a lid a hair above
+    /// zero drew a flat edge across every open eye).
+    #[test]
+    fn open_eyes_have_no_lid() {
+        for status in ["Writing release notes", "Testing: suite", "Building: release", "Planning: next release"] {
+            let mut s = scene(status, "Orange tabby");
+            s.brain.next_event = f64::MAX;
+            let mut t = 0.0;
+            while t < 6.0 {
+                let p = s.update(t);
+                if t > 1.0 {
+                    assert!(p.lid == 0.0 || p.notes.is_some(), "{status}: lid {} at t={t:.2}", p.lid);
+                }
+                t += 1.0 / 30.0;
+            }
+        }
+    }
+
     /// A yawn in the waiting slump: the lids come down before the eyes shut, and the head eases back after.
     #[test]
     fn a_yawn_eases_in_and_out() {
@@ -2696,6 +2795,57 @@ mod bench {
             last = p;
         }
         assert!(shut, "the yawn never closed the eyes");
+    }
+
+    /// A looping greeting repeats exactly every GREET_LOOP seconds (a GIF made of one loop has no seam).
+    #[test]
+    fn a_looping_greeting_repeats_exactly() {
+        let mut s = scene("idle", "Dilute calico");
+        s.greet_forever(0.0, "Welcome to my GitHub!", Some("make yourself at home"));
+        let step = 1.0 / 25.0;
+        let mut poses = Vec::new();
+        for i in 0..=(3.0 * GREET_LOOP / step) as usize {
+            let t = i as f64 * step;
+            let p = s.update(t);
+            // the eyes open in the first moments (a little wake-up), then stay open but for the loop's one blink
+            assert!(p.greet.is_some());
+            assert!(t < 1.0 || !p.eyes_closed || (2.2..2.33).contains(&(t % GREET_LOOP)), "eyes shut at t={t:.2}");
+            poses.push((t, p));
+        }
+        let per = (GREET_LOOP / step).round() as usize;
+        for i in (2 * per)..poses.len() {
+            let ((ta, a), (tb, b)) = (&poses[i - per], &poses[i]);
+            let close = |x: f32, y: f32| (x - y).abs() < 0.02;
+            let same = close(a.hy, b.hy) && close(a.sway, b.sway) && close(a.look, b.look) && close(a.lid, b.lid)
+                && close(a.l.x, b.l.x) && close(a.l.lift, b.l.lift) && close(a.r.x, b.r.x) && close(a.r.lift, b.r.lift)
+                && close(a.twitch, b.twitch) && a.eyes_closed == b.eyes_closed;
+            assert!(same, "t={ta:.2} and t={tb:.2} differ");
+        }
+    }
+
+    /// The hello wave when the kitten starts: it is over after GREET_SECS and the paws never jump into or out of it,
+    /// whatever the status is.
+    #[test]
+    fn the_startup_greeting_hands_over_smoothly() {
+        for status in ["Writing release notes", "Waiting: CI", "Testing: suite", "idle"] {
+            let mut s = scene(status, "Orange tabby");
+            s.greet(0.0);
+            let mut last: Option<(Paw, Paw)> = None;
+            let mut t = 0.0;
+            while t < 6.0 {
+                let p = s.update(t);
+                assert_eq!(p.greet.is_some(), t < GREET_SECS, "{status} t={t:.2}");
+                if let Some((l0, r0)) = last {
+                    for (a, b) in [(l0, p.l), (r0, p.r)] {
+                        let d = ((a.x - b.x).powi(2) + (a.lift - b.lift).powi(2)).sqrt();
+                        // the wave itself moves the paw about 5 px a frame at 30 fps
+                        assert!(d <= 16.0, "{status}: a paw jumped {d:.1} at t={t:.2}");
+                    }
+                }
+                last = Some((p.l, p.r));
+                t += 1.0 / 30.0;
+            }
+        }
     }
 
     /// A rare event pauses the whiteboard drawing: it carries on where it stopped.
