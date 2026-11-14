@@ -13,12 +13,13 @@ pub fn build() -> u32 {
     option_env!("KITTEN_BUILD").and_then(|b| b.parse().ok()).unwrap_or(0)
 }
 
-/// Built by the release workflow for a published release. Local and per-push builds never replace themselves
-/// with a release (that could swap new code for older).
-pub const RELEASE_BUILD: bool = match option_env!("KITTEN_RELEASE") {
-    Some(v) => v.len() == 1 && v.as_bytes()[0] == b'1',
-    None => false,
-};
+/// Whether this exe updates itself: any build with a build number (a release, a per-push CI build, a local build
+/// made with tools/build-local.ps1). It only ever takes a release whose version and build are higher than its own
+/// (`newer`), so a build newer than the latest release keeps itself. A build without a number (a plain
+/// `cargo build`) never updates: it could be any code.
+pub fn updates_itself() -> bool {
+    build() > 0
+}
 
 /// "0.1.1 (build 42)", or "0.1.1 (local build)".
 pub fn label() -> String {
@@ -177,6 +178,13 @@ mod tests {
         assert!(newer("0.1.2", 1, "0.1.1", 99));
         assert!(!newer("0.1.0", 500, "0.1.1", 1));
         assert!(newer("v1.0.0", 1, "0.9.9", 900));
+    }
+
+    #[test]
+    fn a_build_newer_than_the_release_keeps_itself() {
+        // a local build numbered after the last CI run (22) never takes release build 21; the next release does
+        assert!(!newer("0.1.1", 21, "0.1.1", 22));
+        assert!(newer("0.1.1", 23, "0.1.1", 22));
     }
 
     #[test]

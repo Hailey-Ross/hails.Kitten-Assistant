@@ -38,17 +38,18 @@ Why? Long jobs (builds, renders, test runs, backups, scripts) give no sign of li
 
 Only one kitten runs at a time; starting a second one does nothing, so it's safe to put `kitten-assistant` at the top of every script. To start it with Windows, press Win+R, type `shell:startup`, and put a shortcut to `kitten-assistant.exe` in the folder that opens (add any options at the end of the shortcut's **Target** field).
 
-The `experimental` pre-release on the releases page is the newest test build of `main`. Pick it only if you want to try unfinished changes: it never updates itself.
+The `experimental` pre-release on the releases page is the newest test build of `main`. Pick it only if you want to try unfinished changes: it moves on to the next stable release once one is out.
 
 ### Staying up to date
 
-A kitten from a numbered release keeps itself up to date:
+Every kitten with a build number (a numbered release, the `experimental` build, a build made with `tools\build-local.ps1`) keeps itself up to date:
 
 - It checks GitHub **30 seconds after it starts, then every 6 hours**.
-- When a newer stable release is out, it downloads it, checks it against the SHA-256 the release publishes, swaps it in and restarts with the same options. Your status, color and position stay.
+- When a stable release with a higher version or build number than its own is out, it downloads it, checks it against the SHA-256 the release publishes, swaps it in and restarts with the same options. Your status, color and position stay.
 - `kitten-assistant update` checks right away. With a kitten running, that kitten checks and restarts only if there's something newer; with none running, it updates the exe and tells you in a message box.
 - To turn automatic updates off, add the line `auto_update=0` to `kitten-assistant.ini` next to the exe.
-- Pre-releases (the `experimental` build) are never installed this way, and the `experimental` build and builds you make yourself never update themselves.
+- A kitten whose build number is higher than the latest release's keeps itself: it never goes back to older code.
+- Pre-releases (the `experimental` build) are never installed this way, and a plain `cargo build` (no build number) never updates itself.
 
 Update problems are written to `%TEMP%\kitten-assistant.log`.
 
@@ -113,7 +114,9 @@ The first word of the status line picks how the kitten acts (any case; the word 
 | All done | (a busy line turns idle) | for a moment: paws up, sparkles, a green tick and "all done!", then the nap. A job that ended on a problem line goes straight to sleep |
 | Napping | (idle) | asleep on its keyboard, Zzz floating up, a moon and stars on the screen |
 
-**Little breaks:** every 15 to 35 seconds while it's awake, the kitten takes a short break from its mood: a sip of coffee, a big stretch, a yawn, or a look around the room. Now and then the mug turns out to be empty: the kitten peers in, looks annoyed, fetches a kettle, refills the mug and settles back content with a sip of the fresh coffee. A break waits for a good moment (between test rounds, after a whiteboard drawing), the mood picks up where it stopped, and a new status line that comes in during a break shows once the break is over.
+**Screens:** every mood and the nap has eight screens. The table names the first one; a new status line (or a new nap) picks one at random, never the one that mood showed last time. Waiting can show a clock, a spinner or a snail heading for a flag; testing a space shooter, a racing game, a paddle game or a catch game; building a crane, gears, falling blocks or a little house going up; and so on.
+
+**Little breaks:** every 15 to 35 seconds while it's awake, the kitten takes a short break from its mood: a sip of coffee or a look around the room, and only now and then a big stretch or a yawn (at most one of those every 4 minutes). Now and then the mug turns out to be empty: the kitten peers in, looks annoyed, fetches a kettle, refills the mug and settles back content with a sip of the fresh coffee. A break waits for a good moment (between test rounds, after a whiteboard drawing), the mood picks up where it stopped, and a new status line that comes in during a break shows once the break is over.
 
 | Waiting | Problem | Testing |
 |---------|---------|---------|
@@ -185,13 +188,15 @@ cargo build --release
 cargo test --release
 ```
 
-The exe lands in `target\release\kitten-assistant.exe`. A build of your own shows "(local build)" under `version` and never updates itself.
+The exe lands in `target\release\kitten-assistant.exe`. A plain `cargo build` shows "(local build)" under `version` and never updates itself. `powershell -File tools\build-local.ps1` builds it with a build number (the newest Actions run plus one, read with the GitHub CLI, or `-Build <n>`): that kitten keeps itself until a release built after it comes out, then updates to it.
 
 Changing how it draws? `cargo test --release -- --ignored --nocapture --test-threads=1 frame_` prints the time per frame for every mood (`FRAME_COST`), per drawing step (`FRAME_PART`) and one hash over the pixels of many frames (`FRAME_HASH`). A speed-up that leaves the hash the same draws exactly the same picture.
 
 ```
 src/main.rs     command line, window, timers, see-through window output
 src/scene.rs    the kitten, its moods, the desk and computer, and their animation
+src/scene/      the computer's screens for each mood
+src/brain.rs    what the kitten does: the mood's loop or one short break at a time
 src/menu.rs     the right-click menu (pages, coat portraits, keyboard)
 src/canvas.rs   drawing helpers (shapes, outline, text, word wrap)
 src/update.rs   the self-updater (newest stable release, SHA-256 check, swap and restart)
@@ -204,7 +209,7 @@ The art is drawn in code every frame with [tiny-skia](https://crates.io/crates/t
 
 The workflow in [`.github/workflows/release.yml`](.github/workflows/release.yml) tests and builds the exe on every push.
 
-- A push to `main` replaces the `experimental` pre-release with the new build. Installed kittens never update to it, and it never updates itself.
+- A push to `main` replaces the `experimental` pre-release with the new build. Installed kittens never update to it; it updates itself to the next stable release built after it.
 - Publishing a GitHub release (not a pre-release) whose tag is `v` plus the version in `Cargo.toml` (for example `v0.1.1`) builds the exe for it and attaches `kitten-assistant.exe`, its `.sha256` and a `release.json` with the version and build number. That's what installed kittens update to. A tag that doesn't match the version fails the build.
 
 ### Snapshots
@@ -224,7 +229,7 @@ kitten-assistant snapshot done.png --done --time 3.3 --bg 6a8caf
 kitten-assistant snapshot nap.png --bg 6a8caf
 ```
 
-`--time SECONDS` picks the animation moment and `--scale N` the size (default 2). `--screen N` picks the typing screen (0 code, 1 progress bars, 2 equalizer, 3 gear, 4 graph), `--sip` draws a coffee sip, `--coat NAME` picks a color (for example `--coat "Gray tabby"`) and `--seed N` moves the patches on patched coats. Leave out `--bg` for a transparent PNG.
+`--time SECONDS` picks the animation moment and `--scale N` the size (default 2). `--screen N` picks the mood's screen 0-7 (typing: 0 code, 1 progress bars, 2 equalizer, 3 gear, 4 graph), `--sip` draws a coffee sip, `--coat NAME` picks a color (for example `--coat "Gray tabby"`) and `--seed N` moves the patches on patched coats. Leave out `--bg` for a transparent PNG.
 
 ## License
 

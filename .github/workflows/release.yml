@@ -28,8 +28,8 @@ jobs:
         shell: pwsh
         env:
           # The version is Cargo.toml's; every build carries the run number, which only goes up, so builds of one
-          # version are ordered (the updater compares version, then build). Only a published release's build
-          # updates itself.
+          # version are ordered (the updater compares version, then build). Every numbered build updates itself,
+          # but only to a stable release with a higher version or build than its own.
           KITTEN_BUILD: ${{ github.run_number }}
           KITTEN_RELEASE: ${{ github.event_name == 'release' && '1' || '0' }}
           RELEASE_TAG: ${{ github.event.release.tag_name }}

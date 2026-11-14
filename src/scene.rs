@@ -10,6 +10,10 @@ use tiny_skia::{Color, Path, Pixmap, Transform};
 use crate::brain::{Brain, Event};
 use crate::canvas::*;
 
+mod eggs;
+mod more;
+mod screens;
+
 #[cfg(test)]
 thread_local! {
     static ARMS: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
@@ -183,7 +187,6 @@ const CODE: [Rgba; 4] = [
 const KB_BODY: Rgba = Rgba::rgb(110, 116, 150);
 const KB_FRONT: Rgba = Rgba::rgb(82, 86, 116);
 const KEY: Rgba = Rgba::rgb(240, 240, 250);
-const KEY_SHADE: Rgba = Rgba::rgb(184, 186, 212);
 const KEY_HOT: Rgba = Rgba::rgb(255, 214, 102);
 const MUG: Rgba = Rgba::rgb(132, 202, 232);
 const SUB: Rgba = Rgba::rgb(160, 112, 84);
@@ -192,11 +195,16 @@ const SPARK: Rgba = Rgba::rgb(255, 200, 70);
 
 // keyboard layout
 const KX: f32 = 40.0;
-const KY: f32 = 188.0;
+/// The keyboard seen from the desk's front edge: the top and bottom of its near side, the key caps poking up above.
+const KB_TOP: f32 = 204.0;
+const KB_BOT: f32 = 209.5;
+/// The y of a resting paw's top edge (lift 0): the paw on the keys, its lower part behind the keyboard.
+const PAW_BASE: f32 = 193.0;
+/// How far a cheering paw rises above the rest line.
+const CHEER_LIFT: f32 = 63.0;
 const KW: f32 = 130.0;
 const KEY_PITCH: f32 = 11.5;
 const KEY_W: f32 = 9.5;
-const KEY_H: f32 = 3.6;
 const PAW_W: f32 = 20.0;
 
 fn key_x(col: usize) -> f32 {
@@ -498,13 +506,13 @@ fn along(pts: &[(f32, f32)], u: f32) -> (f32, f32) {
 /// Seconds of a testing round: playing, then jotting notes for the last `NOTES_SECS`.
 const TEST_ROUND: f64 = 6.5;
 const NOTES_SECS: f64 = 2.2;
-/// The notepad lying flat on the desk: its back-left corner, width and depth (foreshortened, as the desk top).
-const PAD: (f32, f32) = (18.0, 207.5);
+/// The notepad lying flat on the desk, seen from the desk's front edge: its top-left corner, width and thickness.
+const PAD: (f32, f32) = (18.0, 206.0);
 const PAD_W: f32 = 32.0;
-const PAD_D: f32 = 8.5;
-/// The y of ruled line `row` on the notepad, where the pencil tip writes.
-fn pad_row(row: f32) -> f32 {
-    PAD.1 + 3.4 + 1.9 * row
+const PAD_H: f32 = 3.5;
+/// The y where the pencil tip writes line `row`: the pad's top, since every line lies on it seen edge-on.
+fn pad_row(_row: f32) -> f32 {
+    PAD.1 + 0.4
 }
 /// The gamepad's center while testing: held up in front of the chest.
 const PAD_Y: f32 = 183.0;
@@ -518,6 +526,23 @@ fn pad_point(t: f32, x: f32, y: f32) -> (f32, f32) {
 
 /// Typing screens: scrolling code, progress bars, equalizer, gear, line graph.
 const SCREENS: usize = 5;
+/// How many screens each other mood (and the nap) has; a new status line picks one at random (screens.rs, more.rs).
+pub const LOOKS: usize = 8;
+const LOOK_SLOTS: usize = 9;
+
+fn look_slot(mood: Option<Mood>) -> usize {
+    match mood {
+        Some(Mood::Busy) => 0,
+        Some(Mood::Waiting) => 1,
+        Some(Mood::Problem) => 2,
+        Some(Mood::Testing) => 3,
+        Some(Mood::Building) => 4,
+        Some(Mood::Researching) => 5,
+        Some(Mood::Transfer(_)) => 6,
+        Some(Mood::Thinking) => 7,
+        None => 8,
+    }
+}
 
 /// How fast the marker travels between strokes (board pixels a second; drawing itself is slower).
 const PEN_SPEED: f32 = 360.0;
@@ -656,8 +681,12 @@ pub struct Scene {
     pub mood: Mood,
     /// which typing screen shows (0..SCREENS), picked at random per status line
     pub screen: usize,
+    /// which screen each other mood (and the nap) shows now (0..LOOKS), by look_slot
+    pub looks: [usize; LOOK_SLOTS],
     /// this status line's screen shows its rare little extra
     pub egg: bool,
+    /// which of its mood's extras (eggs.rs), for the moods other than typing, and the nap
+    pub egg_pick: usize,
     /// time (seconds) the current task started
     pub since: f64,
     /// time the last job finished (busy -> idle), for the "all done!" moment
@@ -700,7 +729,9 @@ impl Scene {
             task: String::new(),
             mood: Mood::Busy,
             screen: 0,
+            looks: [0; LOOK_SLOTS],
             egg: false,
+            egg_pick: 0,
             since: 0.0,
             done_at: -100.0,
             up_to_date_at: -100.0,
@@ -767,6 +798,14 @@ impl Scene {
         self.last_act.1
     }
 
+    /// A new screen for `mood` (None = the nap), never the one it showed last time.
+    fn roll_look(&mut self, mood: Option<Mood>) {
+        let k = look_slot(mood);
+        let pick = (self.rand() * (LOOKS - 1) as f64) as usize;
+        self.looks[k] = (self.looks[k] + 1 + pick) % LOOKS;
+        self.egg_pick = (self.rand() * eggs::EGGS as f64) as usize;
+    }
+
     pub fn set_status(&mut self, s: &str, t: f64) {
         self.set_status_aged(s, t, 0.0);
     }
@@ -782,6 +821,11 @@ impl Scene {
             // a new screen for the new line, never the same one twice in a row
             let pick = (self.rand() * (SCREENS - 1) as f64) as usize;
             self.screen = (self.screen + 1 + pick) % SCREENS;
+            self.egg = self.rand() < 0.1;
+            self.roll_look(Some(Mood::of(s)));
+        }
+        if self.busy && !busy {
+            self.roll_look(None);
             self.egg = self.rand() < 0.1;
         }
         // a job that ends without a problem gets a little celebration
@@ -906,7 +950,7 @@ impl Scene {
             r = Paw { x: CX + 9.0, lift: 0.0, key: None, down: false };
         } else if waiting {
             // chin propped on one paw, the other drumming: three quick taps, then a pause
-            l = Paw { x: CX - 30.0, lift: 181.0 - (hy + 17.0), key: None, down: false };
+            l = Paw { x: CX - 30.0, lift: PAW_BASE - (hy + 17.0), key: None, down: false };
             let beat = tf % 1.6;
             // drumming while waiting; a thinking kitten keeps the other paw still
             let tap = if self.mood == Mood::Waiting && beat < 0.6 { (beat * 2.0 * PI * 5.0).sin().max(0.0) } else { 0.0 };
@@ -918,7 +962,7 @@ impl Scene {
             // 6.5 below its corner)
             let hold = |s: f32, m: f32| {
                 let (gx, gy) = pad_point(tf, s * GRIP.0, GRIP.1);
-                Paw { x: gx - PAW_W / 2.0, lift: 181.0 - (gy - 6.5) + m, key: None, down: false }
+                Paw { x: gx - PAW_W / 2.0, lift: PAW_BASE - (gy - 6.5) + m, key: None, down: false }
             };
             r = hold(1.0, mash(4.3));
             l = match notes {
@@ -927,7 +971,7 @@ impl Scene {
                     // right of and 10 below the paw's corner)
                     let along = ((n * 3.0).fract() * 1.15).min(1.0);
                     let row = (n * 3.0).floor().min(2.0);
-                    Paw { x: PAD.0 + 4.0 + 18.0 * along, lift: 181.0 - (pad_row(row) - 10.0), key: None, down: false }
+                    Paw { x: PAD.0 + 4.0 + 18.0 * along, lift: PAW_BASE - (pad_row(row) - 10.0), key: None, down: false }
                 }
                 None => hold(-1.0, mash(3.7)),
             };
@@ -947,12 +991,12 @@ impl Scene {
                 None => goal,
             };
             self.pen = Some((tx, ty));
-            l = Paw { x: tx + 7.0 - PAW_W / 2.0, lift: 181.0 - (ty + 8.0 - 6.5), key: None, down: false };
+            l = Paw { x: tx + 7.0 - PAW_W / 2.0, lift: PAW_BASE - (ty + 8.0 - 6.5), key: None, down: false };
             r = Paw { x: CX + 9.0, lift: 0.0, key: None, down: false };
         } else if cheer.is_some() {
             let wave = 3.0 * (tf * 2.0 * PI * 1.6).sin();
-            l = Paw { x: CX - 50.0, lift: 46.0 + wave, key: None, down: false };
-            r = Paw { x: CX + 30.0, lift: 46.0 - wave, key: None, down: false };
+            l = Paw { x: CX - 50.0, lift: CHEER_LIFT + wave, key: None, down: false };
+            r = Paw { x: CX + 30.0, lift: CHEER_LIFT - wave, key: None, down: false };
         } else if typing {
             let phase = t * 5.0;
             let s = (std::f64::consts::PI * phase).sin() as f32;
@@ -973,8 +1017,8 @@ impl Scene {
         if up.is_some() {
             // the "up to date" cheer takes the paws whatever the mood is doing
             let wave = 3.0 * (tf * 2.0 * PI * 1.6).sin();
-            l = Paw { x: CX - 50.0, lift: 46.0 + wave, key: None, down: false };
-            r = Paw { x: CX + 30.0, lift: 46.0 - wave, key: None, down: false };
+            l = Paw { x: CX - 50.0, lift: CHEER_LIFT + wave, key: None, down: false };
+            r = Paw { x: CX + 30.0, lift: CHEER_LIFT - wave, key: None, down: false };
         }
         if self.lpx < 0.0 {
             self.lpx = l.x;
@@ -993,8 +1037,8 @@ impl Scene {
             // reach for the mug, hold it while it travels, let go and come back
             let w = smooth(if p < 0.15 { p / 0.15 } else if p > 0.88 { (1.0 - p) / 0.12 } else { 1.0 });
             let (gx, gy) = (mug.0 - PAW_W / 2.0 + 2.0, mug.1 + 3.0);
-            let py = 181.0 + (gy - 181.0) * w;
-            r = Paw { x: r.x + (gx - r.x) * w, lift: 181.0 - py, key: None, down: false };
+            let py = PAW_BASE + (gy - PAW_BASE) * w;
+            r = Paw { x: r.x + (gx - r.x) * w, lift: PAW_BASE - py, key: None, down: false };
             self.rpx = r.x;
         }
         // the refill: the right paw keeps hold of the mug (up to the mouth, then out to the left for the kettle, then
@@ -1003,7 +1047,7 @@ impl Scene {
         let (mut kettle, mut fill, mut anger) = (None, 1.0, 0.0);
         if let Some(p) = refill {
             let grip = |m: (f32, f32)| (m.0 + 2.0, m.1 + 9.5);
-            let center = |w: &Paw| (w.x + PAW_W / 2.0, 181.0 - w.lift + 6.5);
+            let center = |w: &Paw| (w.x + PAW_W / 2.0, PAW_BASE - w.lift + 6.5);
             // where the paws rest during an event (not the smoothed paws, which follow this script)
             let (rest_r, rest_l) = (center(&Paw { x: CX + 9.0, lift: 0.0, key: None, down: false }), center(&Paw { x: CX - 29.0, lift: 0.0, key: None, down: false }));
             let (off, pour) = ((-30.0, 118.0), (39.0, 138.0));
@@ -1014,7 +1058,7 @@ impl Scene {
             } else {
                 lerp2(grip(MUG_HOME), rest_r, (p - 0.96) / 0.04)
             };
-            r = Paw { x: rc.0 - PAW_W / 2.0, lift: 181.0 - (rc.1 - 6.5), key: None, down: false };
+            r = Paw { x: rc.0 - PAW_W / 2.0, lift: PAW_BASE - (rc.1 - 6.5), key: None, down: false };
             self.rpx = r.x;
             if p >= 0.40 {
                 let lc = if p < 0.52 {
@@ -1028,7 +1072,7 @@ impl Scene {
                 } else {
                     lerp2(off, rest_l, (p - 0.90) / 0.10)
                 };
-                l = Paw { x: lc.0 - PAW_W / 2.0, lift: 181.0 - (lc.1 - 6.5), key: None, down: false };
+                l = Paw { x: lc.0 - PAW_W / 2.0, lift: PAW_BASE - (lc.1 - 6.5), key: None, down: false };
                 self.lpx = l.x;
                 if (0.52..0.90).contains(&p) {
                     let tilt = if p < 0.62 {
@@ -1179,10 +1223,11 @@ impl Scene {
         // the keyboard is put away while testing: the gamepad is held in front of the arms, the paws wrapped over
         // its grips
         // the keyboard stays put away for the whole testing mood, its breaks included
+        self.arms(&mut c, p);
+        // in front of the paws: they rest on the keys behind its near edge
         if !(self.busy && self.mood == Mood::Testing) {
             self.keyboard(&mut c, p);
         }
-        self.arms(&mut c, p);
         if testing {
             self.controller(&mut c, tf, p);
             let holding = [Some(p.r), p.notes.is_none().then_some(p.l)];
@@ -1190,7 +1235,7 @@ impl Scene {
                 let Some(paw) = paw else { continue };
                 // the paw wraps around the grip: its long side lies across the grip, the toes curl in against the
                 // controller (same center as the paw the pose placed)
-                let (cx, cy) = (paw.x + PAW_W / 2.0, 181.0 - paw.lift + 6.5);
+                let (cx, cy) = (paw.x + PAW_W / 2.0, PAW_BASE - paw.lift + 6.5);
                 let (gx, gy) = (s * (GRIP.0 - 19.0), GRIP.1 - 2.0);
                 let len = (gx * gx + gy * gy).sqrt();
                 let (dx, dy) = (gx / len, gy / len);
@@ -1209,7 +1254,7 @@ impl Scene {
         }
         if let Some(n) = p.notes {
             // the pencil in the writing paw, its tip on the paper
-            let (x, y) = (p.l.x + 4.0, 181.0 - p.l.lift + 10.0);
+            let (x, y) = (p.l.x + 4.0, PAW_BASE - p.l.lift + 10.0);
             let wob = 1.2 * (n * 40.0).sin();
             c.stroke(&line(x - 7.0, y - 13.0 + wob, x, y), INK, 4.2);
             c.stroke(&line(x - 7.0, y - 13.0 + wob, x - 1.2, y - 2.0), SAND, 2.4);
@@ -1225,15 +1270,15 @@ impl Scene {
         if let Some((k, seed)) = p.plan.filter(|(k, _)| *k < 1.0 && p.free) {
             // the marker in the drawing paw, its tip on the board (put down while the finished drawing is admired)
             let (tx, ty) = p.pen.unwrap_or_else(|| plan_strokes(k, seed).1);
-            let (px, py) = (p.l.x + PAW_W / 2.0, 181.0 - p.l.lift + 6.5);
+            let (px, py) = (p.l.x + PAW_W / 2.0, PAW_BASE - p.l.lift + 6.5);
             c.stroke(&line(px, py, tx, ty), INK, 5.0);
             c.stroke(&line(px, py, tx + 1.5, ty + 1.7), Rgba::rgb(60, 110, 200), 3.0);
         }
         if self.busy && self.mood.chin() && p.free {
-            // chin propped on an upright forearm: elbow on the keyboard, paw cupping the jaw,
-            // drawn in front of the head
+            // chin propped on an upright forearm: paw cupping the jaw, drawn in front of the head; the elbow rests
+            // on the desk behind the keyboard, which is drawn again over it
             let (px, py) = (CX - 33.0, p.hy + 12.0);
-            let arm = line(CX - 38.0, KY + 4.0, px + 8.0, py + 9.0);
+            let arm = line(CX - 38.0, KB_TOP - 2.0, px + 8.0, py + 9.0);
             arm_drawn();
             c.stroke(&arm, INK, 14.5);
             c.stroke(&arm, self.coat.fur, 10.5);
@@ -1242,10 +1287,11 @@ impl Scene {
             for (dx, dy) in [(12.5, 3.5), (14.5, 7.0), (13.5, 10.5)] {
                 c.stroke(&line(px + dx, py + dy, px + dx + 3.5, py + dy), INK.fade(0.8), 1.1);
             }
+            self.keyboard(&mut c, p);
         }
         if p.refill.is_some() {
             // the left arm goes behind the mug the right paw holds out (its paw and the kettle come after it)
-            let py = 181.0 - p.l.lift;
+            let py = PAW_BASE - p.l.lift;
             let arm = line(CX - 24.0, p.hy + 46.0, p.l.x + PAW_W / 2.0, py + 5.0);
             arm_drawn();
             c.stroke(&arm, INK, 14.5);
@@ -1253,7 +1299,7 @@ impl Scene {
         }
         if p.sip.is_some() || p.refill.is_some() {
             // the arm, paw and mug in front of the head; the paw holds the mug from below
-            let py = 181.0 - p.r.lift;
+            let py = PAW_BASE - p.r.lift;
             let arm = line(CX + 24.0, p.hy + 46.0, p.r.x + PAW_W / 2.0, py + 5.0);
             arm_drawn();
             c.stroke(&arm, INK, 14.5);
@@ -1265,7 +1311,7 @@ impl Scene {
         }
         if p.refill.is_some() {
             // the kettle and the left paw over everything, so it pours from above
-            let py = 181.0 - p.l.lift;
+            let py = PAW_BASE - p.l.lift;
             if let Some(k) = p.kettle {
                 self.kettle(&mut c, k, p.mug);
             }
@@ -1371,8 +1417,8 @@ impl Scene {
                 for i in 0..3 {
                     c.fill(&circle(206.0 + i as f32 * 6.0, 128.0, 2.0), PINK_DARK);
                 }
-                // the pass count ticks up in the corner
-                let passes = ((t / HOP) as i64 % 9) as usize;
+                // the pass count ticks up in the corner, and holds still under the pause sign with the rest of the game
+                let passes = ((g / HOP) as i64 % 9) as usize;
                 for i in 0..passes {
                     c.fill(&rrect(268.0 - i as f32 * 4.0, 126.0, 2.5, 5.0, 1.0), SAND);
                 }
@@ -1463,45 +1509,19 @@ impl Scene {
         }
     }
 
-    /// The spiral notepad lying flat on the desk while testing (seen from a little above, like the desk top): ruled
-    /// lines, a red margin, the rings along its back edge, and the line being written now.
-    fn notepad(&self, c: &mut Canvas, _t: f32, p: &Pose) {
+    /// The spiral notepad lying flat on the desk while testing, seen from the desk's front edge: a thin stack of
+    /// pages on the desk top, the cardboard back under them, the spiral rings poking up along its far edge.
+    fn notepad(&self, c: &mut Canvas, _t: f32, _p: &Pose) {
         let (x, y) = PAD;
-        // the back edge is a little narrower than the front: it lies away from us
-        let edge = |v: f32| (x + 2.0 * (1.0 - v), x + PAD_W - 2.0 * (1.0 - v));
-        let at = |u: f32, v: f32| {
-            let (l, r) = edge(v);
-            (l + (r - l) * u, y + PAD_D * v)
-        };
-        let corners = [at(0.0, 0.0), at(1.0, 0.0), at(1.0, 1.0), at(0.0, 1.0)];
-        // the page block's front edge, then the top sheet
-        let (fl, fr) = (corners[3], corners[2]);
-        c.blob(&poly(&[fl, fr, (fr.0, fr.1 + 1.6), (fl.0, fl.1 + 1.6)]), Rgba::rgb(214, 208, 192));
-        c.blob(&poly(&corners), Rgba::rgb(252, 248, 234));
-        for row in 0..3 {
-            let v = (pad_row(row as f32) - y) / PAD_D;
-            let (a, b) = (at(0.05, v), at(0.95, v));
-            c.stroke(&line(a.0, a.1, b.0, b.1), Rgba::rgb(150, 182, 220), 0.6);
-        }
-        let (m0, m1) = (at(0.16, 0.12), at(0.16, 0.96));
-        c.stroke(&line(m0.0, m0.1, m1.0, m1.1), RED.fade(0.5), 0.7);
-        // the line being written grows behind the pencil
-        if let Some(n) = p.notes {
-            let row = (n * 3.0).floor().min(2.0);
-            let k = ((n * 3.0 - row) * 1.15).min(1.0);
-            let ly = pad_row(row);
-            let x0 = PAD.0 + 8.0;
-            let pts: Vec<(f32, f32)> = (0..=8).map(|i| {
-                let u = i as f32 / 8.0;
-                (x0 + 18.0 * k * u, ly - 0.5 + 0.35 * (u * 11.0 + row).sin())
-            }).collect();
-            c.stroke(&polyline(&pts), Rgba::rgb(70, 82, 140), 0.8);
-        }
-        // the spiral rings along the back edge
         for i in 0..7 {
-            let (rx, ry) = at(0.12 + i as f32 * 0.127, 0.0);
-            c.stroke(&quad(rx - 1.0, ry + 0.8, rx, ry - 2.6, rx + 1.0, ry + 0.8), INK.fade(0.75), 1.0);
+            let rx = x + PAD_W * (0.12 + i as f32 * 0.127);
+            c.stroke(&quad(rx - 1.3, y + 1.0, rx, y - 5.0, rx + 1.3, y + 1.0), INK.fade(0.8), 1.1);
         }
+        c.blob(&rrect(x, y, PAD_W, PAD_H, 1.0), Rgba::rgb(252, 248, 234));
+        for ly in [y + 1.2, y + 2.0] {
+            c.stroke(&line(x + 1.5, ly, x + PAD_W - 1.5, ly), Rgba::rgb(214, 208, 192), 0.5);
+        }
+        c.fill(&rrect(x + 0.8, y + PAD_H - 1.0, PAD_W - 1.6, 0.8, 0.4), Rgba::rgb(178, 140, 100));
     }
 
     /// A gamepad held up at the chest with its face tipped toward the kitten (the keyboard is put away while
@@ -1926,7 +1946,14 @@ impl Scene {
         };
         c.fill(&screen, bg);
         c.clip(Some(&screen));
-        if mood == Some(Mood::Waiting) {
+        let look = self.looks[look_slot(mood)];
+        let cheering = mood.is_none() && p.cheer.is_some();
+        let other = mood != Some(Mood::Busy) && !cheering && p.up_to_date.is_none();
+        if other && self.egg {
+            self.mood_egg(c, t, mood, self.egg_pick);
+        } else if other && look > 0 {
+            self.alt_screen(c, t, mood, look, p);
+        } else if mood == Some(Mood::Waiting) {
             // an hourglass: the sand runs down, then the glass turns over (the full bottom bulb
             // becomes the top one, so the next run starts exactly where the turn ends)
             const RUN: f32 = 2.4;
@@ -2243,36 +2270,23 @@ impl Scene {
     }
 
     fn keyboard(&self, c: &mut Canvas, p: &Pose) {
-        // body with a front edge, three rows of keys and a space bar
-        c.blob(&rrect(KX + 1.0, KY + 12.0, KW - 2.0, 9.0, 3.0), KB_FRONT);
-        c.blob(&rrect(KX, KY, KW, 16.0, 4.0), KB_BODY);
+        // seen straight on from the desk's front edge: the keyboard tilts toward the kitten, so we see its near
+        // side as a low slab on the desk and only the key caps poking up over its top edge; a pressed cap sinks
         let hot = |col: usize| {
             (p.l.down && p.l.key == Some(col)) || (p.r.down && p.r.key == Some(col))
         };
-        let key = |c: &mut Canvas, x: f32, y: f32, w: f32, pressed: bool| {
-            if pressed {
-                c.fill(&rrect(x, y + 0.9, w, KEY_H, 1.3), KEY_HOT);
-            } else {
-                c.fill(&rrect(x, y + 1.0, w, KEY_H, 1.3), KEY_SHADE);
-                c.fill(&rrect(x, y, w, KEY_H, 1.3), KEY);
-            }
-        };
         for col in 0..11 {
-            key(c, key_x(col), KY + 2.3, KEY_W, hot(col));
+            let (pressed, x) = (hot(col), key_x(col));
+            let cap = rrect(x, KB_TOP - 2.6 + if pressed { 1.4 } else { 0.0 }, KEY_W, 4.0, 1.2);
+            c.fill(&cap, if pressed { KEY_HOT } else { KEY });
+            c.stroke(&cap, INK, 1.0);
         }
-        for col in 0..10 {
-            key(c, key_x(col) + KEY_PITCH / 2.0, KY + 6.8, KEY_W, false);
-        }
-        let y3 = KY + 11.3;
-        key(c, key_x(0), y3, KEY_W, false);
-        key(c, key_x(1), y3, KEY_W, false);
-        key(c, key_x(2), y3, key_x(8) + KEY_W - key_x(2), false);
-        key(c, key_x(9), y3, KEY_W, false);
-        key(c, key_x(10), y3, KEY_W, false);
+        c.blob(&rrect(KX, KB_TOP, KW, KB_BOT - KB_TOP, 2.0), KB_BODY);
+        c.fill(&rrect(KX + 2.0, KB_BOT - 2.2, KW - 4.0, 1.2, 0.6), KB_FRONT);
     }
 
     fn arms(&self, c: &mut Canvas, p: &Pose) {
-        let rest_y = if self.busy { 181.0 } else { 179.0 };
+        let rest_y = if self.busy { PAW_BASE } else { PAW_BASE - 2.0 };
         // while waiting the left arm props the chin and is drawn after the head
         let chin = self.busy && self.mood.chin() && p.free;
         for (paw, sx) in [(p.l, -24.0), (p.r, 24.0)] {
@@ -2426,7 +2440,7 @@ impl Scene {
             let strength = (1.0 - paw.lift).clamp(0.0, 1.0);
             let col = SPARK.fade(strength);
             let x = paw.x + PAW_W / 2.0;
-            let y = 181.0;
+            let y = PAW_BASE;
             c.stroke(&line(x - 13.0, y + 3.0, x - 17.0, y - 1.0), col, 1.5);
             c.stroke(&line(x + 13.0, y + 3.0, x + 17.0, y - 1.0), col, 1.5);
             c.stroke(&line(x, y - 4.0, x, y - 8.0), col, 1.5);
@@ -2503,6 +2517,32 @@ mod bench {
         s.patch_seed = 7;
         s.set_status(status, 0.0);
         s
+    }
+
+    /// Every new line of a mood (and every new nap) shows another of its screens than the last time, and over many
+    /// lines each of them shows up.
+    #[test]
+    fn mood_screens_never_repeat() {
+        let mut s = Scene::new();
+        for (i, line) in MOODS[2..].iter().chain(["idle"].iter()).enumerate() {
+            let slot = look_slot(if *line == "idle" { None } else { Some(Mood::of(line)) });
+            let mut seen = [false; LOOKS];
+            let mut last = None;
+            for n in 0..200 {
+                if *line == "idle" {
+                    s.set_status(&format!("job {n}"), n as f64);
+                    s.set_status("idle", n as f64 + 0.5);
+                } else {
+                    s.set_status(&format!("{line} {n}"), n as f64);
+                }
+                let look = s.looks[slot];
+                assert!(look < LOOKS);
+                assert_ne!(Some(look), last, "{line}: same screen twice in a row (round {n}, mood {i})");
+                seen[look] = true;
+                last = Some(look);
+            }
+            assert!(seen.iter().all(|&v| v), "{line}: a screen never showed");
+        }
     }
 
     /// Status lines change at any moment of a sip or refill (other moods, idle and back, new text): no frame ever

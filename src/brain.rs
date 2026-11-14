@@ -30,9 +30,17 @@ impl Event {
 
 /// How often each event comes up (relative weights).
 const EVENTS: [(Event, f64); 5] =
-    [(Event::Sip, 0.45), (Event::Refill, 0.15), (Event::Stretch, 0.15), (Event::Yawn, 0.10), (Event::LookAround, 0.15)];
+    [(Event::Sip, 0.55), (Event::Refill, 0.15), (Event::Stretch, 0.05), (Event::Yawn, 0.04), (Event::LookAround, 0.21)];
 /// Seconds between events: at least the first, plus up to the second at random.
 const GAP: (f64, f64) = (15.0, 20.0);
+/// A stretch or a yawn at most once in this many seconds; one rolled sooner is a sip instead.
+const BODY_COOLDOWN: f64 = 240.0;
+
+impl Event {
+    fn body(self) -> bool {
+        matches!(self, Event::Stretch | Event::Yawn)
+    }
+}
 
 /// One frame's answer: the mood whose loop shows, how far that loop has run, and the event if one has the paws.
 #[derive(Clone, Copy, Debug)]
@@ -56,11 +64,13 @@ pub struct Brain {
     event: Option<(Event, f64)>,
     pub next_event: f64,
     last_t: f64,
+    /// when the last stretch or yawn started
+    last_body: Option<f64>,
 }
 
 impl Brain {
     pub fn new() -> Self {
-        Brain { wanted: None, mood: None, work: 0.0, line: 0, restart: None, event: None, next_event: 10.0, last_t: 0.0 }
+        Brain { wanted: None, mood: None, work: 0.0, line: 0, restart: None, event: None, next_event: 10.0, last_t: 0.0, last_body: None }
     }
 
     /// The status line asks for `mood` (None = idle); `new_line` when its text changed, so the loop starts over.
@@ -116,7 +126,15 @@ impl Brain {
                         pick -= e.1;
                         pick < 0.0
                     });
-                    self.event = Some((e.map_or(Event::Sip, |e| e.0), t));
+                    let mut e = e.map_or(Event::Sip, |e| e.0);
+                    if e.body() {
+                        if self.last_body.is_some_and(|b| t - b < BODY_COOLDOWN) {
+                            e = Event::Sip;
+                        } else {
+                            self.last_body = Some(t);
+                        }
+                    }
+                    self.event = Some((e, t));
                     self.next_event = t + GAP.0 + rand() * GAP.1;
                 }
             }
@@ -175,6 +193,33 @@ mod tests {
             }
         }
         assert!(first.unwrap() >= 6.0, "{first:?}");
+    }
+
+    #[test]
+    fn stretches_and_yawns_are_rare_and_never_within_four_minutes() {
+        let mut b = Brain::new();
+        // a roll that always lands on the stretch's slice of the weights
+        let total: f64 = EVENTS.iter().map(|e| e.1).sum();
+        let at = (0.55 + 0.15 + 0.02) / total;
+        let mut flip = false;
+        let mut r = || {
+            flip = !flip;
+            if flip { at } else { 0.0 }
+        };
+        b.want(Some(Mood::Busy), true, 0.0);
+        let (mut t, mut bodies) = (0.0, Vec::new());
+        while t < 600.0 {
+            t += 0.1;
+            if let Some((e, p)) = b.tick(t, &mut r, &rounds).event {
+                if e.body() && p < 0.05 && bodies.last().is_none_or(|l: &f64| t - l > 5.0) {
+                    bodies.push(t);
+                }
+            }
+        }
+        assert!(bodies.windows(2).all(|w| w[1] - w[0] >= BODY_COOLDOWN), "{bodies:?}");
+        assert!(bodies.len() <= 3, "{bodies:?}");
+        let share: f64 = EVENTS.iter().filter(|e| e.0.body()).map(|e| e.1).sum::<f64>() / total;
+        assert!(share < 0.1, "{share}");
     }
 
     #[test]

@@ -73,6 +73,20 @@ character that is not a letter, so `Waiting:`, `waiting...` and `WAITING for CI`
 | Thinking | `Thinking`, `Think`, `Planning`, `Plan`, `Designing`, `Design`, `Brainstorming`, `Pondering` | draws on a whiteboard on an easel beside the desk with a blue marker: a different picture every round (a flowchart, a bar chart, a line graph, a mind map, a roadmap, a pie chart, a rocket, a Venn diagram or a light bulb), drawn over about 6.5 seconds and admired for 2 more; the screen shows a checklist that ticks off as the drawing grows |
 | All done | (no word: a busy line turns idle) | for 2.5 seconds: paws up, little hops, sparkles, a green tick and "all done!", then the nap |
 
+Every mood and the nap has eight screens. The table names the first one; each new status line
+(or new nap) picks one of the eight at random, never the one that mood showed last time:
+
+| Mood | The other seven screens |
+|------|------------------------|
+| Waiting | a wall clock, dots hopping over a sweeping bar, a snail heading for a flag, a spinner, a bar stuck at 99%, a queue shuffling forward, the sun and moon crossing the sky |
+| Problem | a warning sign, a sad face over a broken bar, a bug scuttling under a "!", a pulled plug sparking, a snapped chain, a crack running over the glass, a thermometer running hot |
+| Testing | a space shooter, a racing game, a paddle game, a catch game, a gem puzzle, a golf game, a fishing game (all freeze under the pause sign while notes are taken) |
+| Building | a crane stacking crates, two gears turning, blocks piling up in a pit, a little house going up, a bridge going across, a robot arm welding, scaffolding climbing |
+| Researching | a magnifying glass over the lines, an open book turning its pages, a search with results dropping in, a turning globe, a microscope view, a bar chart read bar by bar, a map with a route |
+| Transferring | packets hopping between two computers, an arrow in a filling ring, parcels riding a belt into a folder, a dish sending (or catching) rings, a paper plane, data bubbling through a pipe, a moving truck |
+| Thinking | a mind map, sticky notes, a light bulb that brightens, a timeline, a jigsaw, a blueprint, index cards lining up (each grows with the drawing) |
+| Napping | a fish tank, a "zzz" badge drifting round, rain on the window, a lava lamp, a candle, northern lights, a snow globe |
+
 The all-done moment follows any busy or waiting line that turns idle, but not a problem line:
 a job that ended badly goes straight to sleep. To use the moods from a script, write
 `Waiting: ...` while you wait on something (a download, a review, another machine) and
@@ -91,6 +105,9 @@ kitten switches. A new status line that comes in during a break shows once the b
   back and returns to its mood. `snapshot --sip` draws the middle of a sip.
 - **A stretch** (about 2.6 seconds): both arms up high, eyes squeezed shut, head back a little.
 - **A yawn** (about 2.2 seconds): a wide-open mouth with its eyes closed.
+
+Stretches and yawns are the rare ones: about one break in eleven, and never two of them within 4
+minutes (a stretch or yawn that comes up sooner is a sip instead).
 - **A look around** (about 3.2 seconds): it glances off to the left, then the right, then back.
 
 About one coffee break in four, the mug turns out to be empty (about 7 seconds): the kitten
@@ -146,17 +163,19 @@ kitten-assistant help                 show the command summary (in a message box
   Put a word in front (`kitten-assistant "Check: --check-assets hang"`), quote the whole line,
   or write the status file directly.
 
-- **Updates install themselves.** A kitten from a numbered release checks GitHub
+- **Updates install themselves.** Every kitten with a build number (a numbered release, the
+  `experimental` build, a build made with `tools\build-local.ps1`) checks GitHub
   30 seconds after it starts and then every 6 hours. When a newer stable release is out (a
-  higher version, or the same version with a higher build number), it downloads it, checks it
-  against the SHA-256 the release publishes, swaps it in and restarts with the same options
-  (your status, color and position stay). Pre-releases (the rolling `experimental` build) are
-  never installed this way, and the `experimental` build never updates itself. `update` checks
+  higher version, or the same version with a higher build number than its own), it downloads it,
+  checks it against the SHA-256 the release publishes, swaps it in and restarts with the same
+  options (your status, color and position stay). A kitten whose build number is higher than the
+  latest release's keeps itself, so it never goes back to older code. Pre-releases (the rolling
+  `experimental` build) are never installed this way. `update` checks
   right away: with a kitten running, that kitten checks and restarts itself only if there is
   something newer, with no message; with none running, it updates the exe and says so in a
   message box. To turn automatic updates off, add the line `auto_update=0` to
-  `kitten-assistant.ini` next to the exe. A kitten you built yourself never updates itself
-  (`update` tells you it is a development build). The exe's folder must be writable for
+  `kitten-assistant.ini` next to the exe. A plain `cargo build` has no build number and never
+  updates itself (`update` tells you so). The exe's folder must be writable for
   updates and settings. Update problems are written to `%TEMP%\kitten-assistant.log`.
 
 - `say` and `idle` only write the status file and exit at once. They work even if no kitten is
@@ -187,7 +206,7 @@ kitten-assistant help                 show the command summary (in a message box
 | `--time SECONDS`| snapshot       | which moment of the animation to draw (default 3.2)             |
 | `--bg RRGGBB`   | snapshot       | background color as hex, for example `6a8caf`; default transparent |
 | `--done`        | snapshot       | draw the all-done moment (use with `--time 3.3`)               |
-| `--screen N`    | snapshot       | typing screen: 0 code (default), 1 progress bars, 2 equalizer, 3 gear, 4 line graph |
+| `--screen N`    | snapshot       | the mood's screen 0-7 (default 0, the first); typing: 0 code, 1 progress bars, 2 equalizer, 3 gear, 4 line graph |
 | `--sip`         | snapshot       | draw the middle of a coffee sip (snapshots never sip otherwise) |
 | `--coat NAME`   | snapshot       | the color, as named under right-click > **Color** (any case), for example `"Gray tabby"`; default Orange tabby |
 | `--seed N`      | snapshot       | where the patches sit on patched coats (default 1)              |
@@ -397,7 +416,7 @@ for that project only), and make sure the assistant can run
 - **Check for an update now:** right-click the kitten and click **Check for Update**. A newer
   release is downloaded, checked and started in place of the old one (the kitten restarts);
   otherwise the kitten cheers for 3 seconds with "up to date" and a green tick drawing itself on the computer screen,
-  whatever it was doing. A development build says it does not update.
+  whatever it was doing. A build without a build number says it does not update.
 - **Always on top on or off:** right-click the kitten and click **Always on top**. A check
   mark means on. Off lets other windows cover the kitten (click the desktop or minimize them
   to see it again). The choice is saved in `kitten-assistant.ini` (`always_on_top=0` or `1`)
@@ -471,19 +490,24 @@ The exe is `target\release\kitten-assistant.exe`. The source is small:
 ```
 src/main.rs     command line, window, timers, see-through window output
 src/scene.rs    the kitten, desk, computer, keyboard and their animation
+src/scene/      the computer's screens for each mood
+src/brain.rs    what the kitten does: the mood's loop or one short break at a time
+src/menu.rs     the right-click menu (pages, coat portraits, keyboard)
 src/canvas.rs   drawing helpers (shapes, outline, text, word wrap)
 src/update.rs   the self-updater
 ```
 
-A build of your own shows "(local build)" under `version` and never updates itself.
-`cargo test --release` runs the tests.
+A plain `cargo build` shows "(local build)" under `version` and never updates itself.
+`powershell -File tools\build-local.ps1` builds it with a build number (the newest Actions run
+plus one, read with the GitHub CLI, or `-Build <n>`): it keeps itself until a release built after
+it comes out, then updates to it. `cargo test --release` runs the tests.
 
 ### How releases are made
 
 The workflow in `.github/workflows/release.yml` tests and builds the exe on every push.
 
 - A push to `main` replaces the `experimental` pre-release with the new build. Installed
-  kittens never update to it, and it never updates itself.
+  kittens never update to it; it updates itself to the next stable release built after it.
 - Publishing a GitHub release (not marked as a pre-release) whose tag is `v` plus the version in `Cargo.toml` (for example
   `v0.1.1`) builds the exe for it and attaches `kitten-assistant.exe`, its `.sha256` and a
   `release.json` with the version and build number. That is what installed kittens update to.

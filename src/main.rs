@@ -37,7 +37,7 @@ snapshot options:
   --minutes N      elapsed minutes shown in the bubble
   --bg RRGGBB      background color (default: transparent)
   --done           render the all-done moment
-  --screen N       typing screen 0-4 (code, progress, equalizer, gear, graph; default 0)
+  --screen N       screen 0-4 of the mood (typing: code, progress, equalizer, gear, graph; default 0)
   --sip            render the middle of a coffee sip
   --coat NAME      the color (as in right-click > Color, e.g. \"Gray tabby\"; default: Orange tabby)
   --seed N         where the patches sit on patched coats (default 1)";
@@ -59,6 +59,7 @@ struct Opts {
     screen: Option<usize>,
     sip: bool,
     egg: bool,
+    egg_pick: Option<usize>,
     menu: Option<String>,
     hover: Option<usize>,
     refill: Option<f64>,
@@ -87,6 +88,7 @@ fn parse() -> Result<Opts, String> {
             "--done" => o.done = true,
             "--sip" => o.sip = true,
             "--egg" => o.egg = true,
+            "--eggpick" => { o.egg = true; o.egg_pick = Some(val()?.parse().map_err(|_| "bad --eggpick")?) }
             "--menu" => o.menu = Some(val()?),
             "--event" => o.event = Some(val()?),
         "--uptodate" => o.uptodate = Some(val()?.parse().map_err(|_| "bad --uptodate")?),
@@ -251,7 +253,6 @@ fn snapshot(o: &Opts) -> Result<(), String> {
     s.set_status(o.busy.as_deref().unwrap_or("idle"), 0.0);
     s.since = -o.minutes.unwrap_or(0.0) * 60.0;
     s.screen = o.screen.unwrap_or(0) % 5;
-    s.egg = o.egg;
     s.coat = scene::Coat::named(o.coat.as_deref().unwrap_or(""));
     s.patch_seed = o.seed.unwrap_or(1);
     // no surprise sips in snapshots; --sip puts one in its drinking moment
@@ -285,6 +286,11 @@ fn snapshot(o: &Opts) -> Result<(), String> {
         s.set_status("job", 0.0);
         s.set_status("idle", (t_end - 1.0).max(0.0));
     }
+    // the other moods and the nap show their screen N too (0 = their first one)
+    s.looks = [o.screen.unwrap_or(0) % scene::LOOKS; 9];
+    s.egg = o.egg;
+    // --eggpick N: which of a mood's extras (not in the usage text)
+    s.egg_pick = o.egg_pick.unwrap_or(0);
     let (w, h) = ((scene::W * sc).ceil() as u32, (scene::H * sc).ceil() as u32);
     let mut pix = Pixmap::new(w, h).ok_or("pixmap")?;
     let mut t = 0.0;
@@ -990,10 +996,12 @@ mod win {
     const WM_UP_TO_DATE: u32 = WM_APP + 3;
     static MUTEX: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
-    /// Release builds only; off with `auto_update=0` in kitten-assistant.ini.
+    /// Builds with a build number only; off with `auto_update=0` in kitten-assistant.ini.
     fn auto_update() -> bool {
-        update::RELEASE_BUILD && setting("auto_update").map_or(true, |v| v != "0")
+        update::updates_itself() && setting("auto_update").map_or(true, |v| v != "0")
     }
+
+    const NO_BUILD_NUMBER: &str = "This is a local build without a build number, so it does not update itself. Build it with tools\\build-local.ps1 to give it one.";
 
     /// Checks on a background thread: once now (`repeat` false), or 30 s after start and then
     /// every 6 hours; posts WM_UPDATE_READY once a newer release is downloaded and verified.
@@ -1024,10 +1032,8 @@ mod win {
     /// Right-click > Check for Update: checks now on a background thread and says what it found; a newer release
     /// is downloaded, verified and swapped in like an automatic update.
     fn check_from_menu(hwnd: HWND) {
-        if !update::RELEASE_BUILD {
-            let _ = std::thread::Builder::new().name("update-msg".into()).spawn(|| {
-                message(&format!("This is a development build ({}): only release builds update themselves.", update::label()));
-            });
+        if !update::updates_itself() {
+            let _ = std::thread::Builder::new().name("update-msg".into()).spawn(|| message(NO_BUILD_NUMBER));
             return;
         }
         let at = hwnd as usize;
@@ -1064,8 +1070,8 @@ mod win {
 
     /// `kitten-assistant update`: the running kitten checks now; with none running, update the exe here.
     pub fn update_now() -> Result<(), String> {
-        if !update::RELEASE_BUILD {
-            message(&format!("This is a development build ({}): only release builds update themselves.", update::label()));
+        if !update::updates_itself() {
+            message(NO_BUILD_NUMBER);
             return Ok(());
         }
         let c = wide(CLASS);

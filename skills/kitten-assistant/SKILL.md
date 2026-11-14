@@ -44,27 +44,58 @@ you are still working and on what.
    status file.
 4. If the exe cannot be found and the user does not answer, carry on with the task without
    the kitten. Never let the kitten block the real work.
+5. The moods below need a recent kitten. `kitten-assistant update` checks for a newer release
+   and installs it (the running kitten restarts on the new one); the user can also right-click
+   the kitten > Check for Update.
 
 ## When to write the status
 
 | Moment                                         | Write                                        |
 |------------------------------------------------|----------------------------------------------|
-| You start a task with more than a step or two  | a line naming the task                       |
-| You move to a new step or phase                | a new line for that step                     |
-| You wait on something long (build, test, download, another machine) | a line starting with `Waiting`, for example `Waiting: release build` |
+| You start a task with more than a step or two  | a line naming the task, starting with the mood word that fits |
+| You move to a new step or phase                | a new line for that step, with its own mood word |
+| You run a build, a test, a download or a push  | the matching mood (`Building: ...`, `Testing: ...`, `Downloading: ...`, `Pushing: ...`) right before it, and a new line after it with what came out |
+| You wait on something outside your hands (CI, another machine, a review) | a line starting with `Waiting`, for example `Waiting: CI on main` |
 | You finish and hand back to the user           | `idle` (the kitten cheers for a moment, then naps) |
 | You stop because something failed and the user has to look | a line starting with `Failed`, for example `Failed: release build` |
 | You ask the user a question and wait for the answer | `idle` (the kitten should not look busy while you are waiting on them) |
 
-The first word picks the kitten's mood: `Waiting` (or `Wait`) makes it wait with its chin on a
-paw and an hourglass on its screen; `Failed`, `Fail`, `Error` or `Problem` makes it look
-worried with a red X; anything else makes it type. Use the waiting line only while something
-of yours is really still running, and the failed line only for a failure the user needs to
-see; a step that failed and that you then fixed yourself is just your next step.
+### Moods: start every line with the word that fits
+
+The first word of the line picks what the kitten acts out (any case; the word ends at the first
+character that is not a letter, so `Building:`, `building...` and `BUILDING the app` all count).
+Lead with it on every line, so the user sees what kind of work this is at a glance:
+
+| What you are doing | Start the line with | The kitten |
+|--------------------|---------------------|------------|
+| Reading code, logs, docs; searching; analyzing | `Reading`, `Reviewing`, `Researching`, `Analyzing`, `Searching`, `Investigating`, `Studying`, `Exploring`, `Digging` | reading glasses, paws folded, a page scrolls by with highlights |
+| Designing or planning a change | `Planning`, `Designing`, `Thinking`, `Brainstorming`, `Pondering` | draws on a whiteboard beside the desk |
+| Building or compiling | `Building`, `Compiling`, `Rebuilding`, `Linking`, `Packaging`, `Bundling` | types in a hard hat while a brick wall goes up |
+| Running tests, checks, a game or app run | `Testing`, `Checking`, `Verifying`, `Playtesting`, `QA`, `Regression`, `Smoke` | plays on a gamepad, jots notes on a notepad between rounds |
+| Downloading, fetching, pulling, installing, syncing, copying | `Downloading`, `Fetching`, `Pulling`, `Installing`, `Syncing`, `Copying` | files fly down from a cloud |
+| Pushing, uploading, publishing, deploying, backing up | `Pushing`, `Uploading`, `Publishing`, `Deploying`, `Backing` | files fly up to a cloud |
+| Waiting on something you do not drive | `Waiting`, `Wait` | chin on a paw, drumming, an hourglass on the screen |
+| A failure the user needs to see | `Failed`, `Fail`, `Error`, `Problem` | drooping ears, a red X |
+| Writing code or docs, anything else | any other word | types away |
+
+Rules for the moods:
+- `Waiting` only for things outside your hands: CI, another machine, a review, a background run
+  you are not driving. Your own build is `Building`, your own test run is `Testing`.
+- One line per tool call that changes the kind of work: a build, a test run and the reading of
+  its results are three lines, not one line left up through all of them.
+- `Failed` only for a failure the user needs to see; a step that failed and that you then fixed
+  yourself is just your next step.
+- Never start a line with `--`: the exe takes it as an option and shows a message box on the
+  user's screen that waits for a click.
 
 Always end your turn with `idle`, or with the `Failed: ...` line when the turn ends on a
-failure. A kitten that keeps typing or waiting after you stopped tells the user something
-false. Your next task's first line replaces a failed line.
+failure, even when a background build or test of yours is still running. A kitten that keeps
+typing, building or waiting after you stopped tells the user something false. Your next task's
+first line replaces a failed line.
+
+The kitten also takes little breaks on its own (a sip of coffee, a look around, now and then a
+stretch, a yawn or a coffee refill); they need nothing from you, and a new line that comes in
+during one shows once it ends.
 
 Commands (add `--status "<path>"` if the setup check found one):
 
