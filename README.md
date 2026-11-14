@@ -235,20 +235,13 @@ kitten-assistant snapshot nap.png --bg 6a8caf
 
 ### A greeting GIF
 
-`tools\greeting-gif.ps1` makes a looping GIF of the kitten waving hello with your own words in its bubble, for a GitHub profile, a website or a chat. It uses your kitten's coat unless you pick one, and needs ffmpeg.
+`tools\greeting-gif.ps1` makes a looping animation of the kitten waving hello with your own words in its bubble, for a GitHub profile, a website or a chat. It uses your kitten's coat unless you pick one, and needs ffmpeg.
 
 ```
-powershell -File tools\greeting-gif.ps1 -Text "Hi, welcome to my GitHub!" -Sub "make yourself at home" -Out greeting.gif
+powershell -File tools\greeting-gif.ps1 -Text "Hi, welcome to my GitHub!" -Sub "make yourself at home" -Out greeting.webp
 ```
 
-GIFs have no soft see-through edges, so `-Background` should match the page: `0d1117` (the default) for GitHub's dark theme, `ffffff` for its light one. A README can show the right one for each theme:
-
-```html
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="greeting-dark.gif">
-  <img src="greeting-light.gif" alt="A kitten at a little computer waving hello">
-</picture>
-```
+The background is see-through, so one file fits any page, light or dark. `-Out` picks the file type: `.webp` (the default, smallest, soft edges), `.png` (an animated PNG, the same soft edges, about twice the size) or `.gif`. A GIF can only be fully see-through or not at all, which leaves jagged edges, so for a GIF give the page's color with `-Background` (GitHub dark `0d1117`, light `ffffff`).
 
 ## License
 

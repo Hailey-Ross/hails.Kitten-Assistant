@@ -1352,6 +1352,9 @@ impl Scene {
             c.fill(&circle(x, y, 1.1), INK);
         }
         self.head(&mut c, p);
+        if p.greet.is_some() {
+            self.waving_paw(&mut c, p);
+        }
         if self.busy && self.mood == Mood::Building {
             self.hard_hat(&mut c, p);
         }
@@ -2396,13 +2399,47 @@ impl Scene {
         c.fill(&rrect(KX + 2.0, KB_BOT - 2.2, KW - 4.0, 1.2, 0.6), KB_FRONT);
     }
 
+    /// The hello wave's paw: the arm up beside the head and the paw held open, palm out, so its pink pads show (a big
+    /// pad and four toe beans); it tilts a little with each wave.
+    fn waving_paw(&self, c: &mut Canvas, p: &Pose) {
+        let paw = p.r;
+        let (cx, cy) = (paw.x + PAW_W / 2.0, PAW_BASE - paw.lift + 6.5);
+        let arm = line(CX + 24.0, p.hy + 46.0, cx - 2.0, cy + 8.0);
+        arm_drawn();
+        c.stroke(&arm, INK, 14.5);
+        c.stroke(&arm, self.coat.fur, 10.5);
+        // the wave swings the paw 6 to either side of its middle; it leans the same way
+        let tilt = ((paw.x - (CX + 50.0)) / 6.0).clamp(-1.0, 1.0) * 0.28;
+        let (ca, sa) = (tilt.cos(), tilt.sin());
+        let at = |x: f32, y: f32| (cx + x * ca - y * sa, cy + x * sa + y * ca);
+        let ring = |x: f32, y: f32, rx: f32, ry: f32| -> Vec<(f32, f32)> {
+            (0..28).map(|i| {
+                let a = i as f32 / 28.0 * 2.0 * PI;
+                at(x + rx * a.cos(), y + ry * a.sin())
+            }).collect()
+        };
+        c.blob(&poly(&ring(0.0, 0.0, 12.5, 12.0)), self.coat.fur);
+        // the big pad: wide at the bottom, three soft lobes along its lower edge
+        let pad = PINK_DARK.fade(0.85);
+        c.fill(&poly(&ring(0.0, 4.2, 5.6, 4.2)), self.coat.pink);
+        for x in [-3.2f32, 0.0, 3.2] {
+            c.fill(&poly(&ring(x, 6.4, 2.6, 2.2)), self.coat.pink);
+        }
+        // four toe beans in an arc over it
+        for (x, y) in [(-7.6f32, -2.6f32), (-3.0, -7.2), (3.0, -7.2), (7.6, -2.6)] {
+            c.fill(&poly(&ring(x, y, 2.4, 2.9)), self.coat.pink);
+            c.stroke(&poly(&ring(x, y, 2.4, 2.9)), pad.fade(0.5), 0.7);
+        }
+    }
+
     fn arms(&self, c: &mut Canvas, p: &Pose) {
         let rest_y = if self.busy { PAW_BASE } else { PAW_BASE - 2.0 };
         // while waiting the left arm props the chin and is drawn after the head
         let chin = self.busy && self.mood.chin() && p.free;
         for (paw, sx) in [(p.l, -24.0), (p.r, 24.0)] {
             // the sipping arm is drawn after the head too, so it does not slip under the face
-            if p.refill.is_some() || (chin && sx < 0.0) || (p.sip.is_some() && sx > 0.0) {
+            // the waving paw is drawn after the head too, its pads facing you (`waving_paw`)
+            if p.refill.is_some() || (chin && sx < 0.0) || ((p.sip.is_some() || p.greet.is_some()) && sx > 0.0) {
                 continue;
             }
             let py = rest_y - paw.lift;
