@@ -21,7 +21,8 @@ const USAGE: &str = "\
 kitten-assistant                      run the kitten (watches the status file)
 kitten-assistant say \"some text\"      kitten types, bubble shows the text
 kitten-assistant idle                 kitten naps
-kitten-assistant quit                 close a running kitten
+kitten-assistant status               print the current status line (idle when napping)
+kitten-assistant quit                close a running kitten
 kitten-assistant snapshot out.png     render one frame to a PNG
 kitten-assistant update               check for a newer stable release now and install it
 kitten-assistant version              show the version
@@ -169,6 +170,12 @@ fn main() {
         "run" => win::run(&o, status),
         "say" => std::fs::write(&status, o.arg.clone().unwrap_or_default()).map_err(|e| e.to_string()),
         "idle" => std::fs::write(&status, "idle").map_err(|e| e.to_string()),
+        // the line the kitten shows, as it reads it; `idle` when the file is empty, missing or says so
+        "status" => {
+            let line = read_status(&status);
+            win::print(if line.is_empty() { "idle" } else { &line });
+            Ok(())
+        }
         "quit" => {
             win::quit();
             Ok(())
@@ -380,6 +387,24 @@ mod win {
     pub fn message(text: &str) {
         let (t, c) = (wide(text), wide("Kitten Assistant"));
         unsafe { MessageBoxW(null_mut(), t.as_ptr(), c.as_ptr(), MB_OK) };
+    }
+
+    /// One line to stdout. The exe is a windowed app: piped or captured output (scripts, `$x = ...`, Git Bash) has a
+    /// stdout to write to; run straight in a console it has none, so it borrows the parent's console.
+    pub fn print(text: &str) {
+        use std::io::Write;
+        use windows_sys::Win32::System::Console::{AttachConsole, GetStdHandle, ATTACH_PARENT_PROCESS, STD_OUTPUT_HANDLE};
+        let has_out = || unsafe {
+            let h = GetStdHandle(STD_OUTPUT_HANDLE);
+            !h.is_null() && h != INVALID_HANDLE_VALUE
+        };
+        if has_out() || (unsafe { AttachConsole(ATTACH_PARENT_PROCESS) } != 0 && has_out()) {
+            let mut out = std::io::stdout();
+            let _ = writeln!(out, "{text}");
+            let _ = out.flush();
+        } else if let Ok(mut con) = std::fs::OpenOptions::new().write(true).open("CONOUT$") {
+            let _ = writeln!(con, "{text}");
+        }
     }
 
     pub fn quit() {
