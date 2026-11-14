@@ -707,6 +707,11 @@ pub struct Scene {
     last_paws: (Paw, Paw),
     /// a change of activity eases the paws from where they were (start time, left, right)
     blend: Option<(f64, Paw, Paw)>,
+    /// head height, sway and ear droop of the last frame, and where a change of activity eases them from
+    last_head: [f32; 3],
+    head_blend: Option<(f64, [f32; 3])>,
+    /// eyes: where they look, the upper lid, and how far they are closing (all follow their targets)
+    eyes: [f32; 3],
     /// the marker's tip while drawing: it follows the stroke, and travels (not jumps) to the next one
     pen: Option<(f32, f32)>,
     last_t: f64,
@@ -748,6 +753,9 @@ impl Scene {
             last_act: (None, None, 0),
             last_paws: (Paw { x: CX - 29.0, lift: 0.0, key: None, down: false }, Paw { x: CX + 9.0, lift: 0.0, key: None, down: false }),
             blend: None,
+            last_head: [f32::NAN; 3],
+            head_blend: None,
+            eyes: [0.0, 0.0, 1.0],
             pen: None,
             last_t: 0.0,
             // Windows ships these; the kitten still draws without text if none load.
@@ -1112,6 +1120,9 @@ impl Scene {
         if now != self.last_act {
             self.last_act = now;
             self.blend = Some((t, self.last_paws.0, self.last_paws.1));
+            if !self.last_head[0].is_nan() {
+                self.head_blend = Some((t, self.last_head));
+            }
         }
         if let Some((t0, l0, r0)) = self.blend {
             let w = smooth(((t - t0) / BLEND_SECS) as f32);
@@ -1129,7 +1140,6 @@ impl Scene {
 
         // looks at the screen while typing and glances back at you every so often;
         // while waiting it looks off to the side now and then
-        let drinking = sip.is_some_and(|p| (0.38..0.66).contains(&p));
         let look = if let Some(p) = looking {
             // off to the left, over to the right, back
             let to = |a: f32, b: f32, x: f32| a + (b - a) * smooth(x.clamp(0.0, 1.0));
@@ -1171,19 +1181,45 @@ impl Scene {
         // the mouthful: the mug tips and the mouth opens (on the refill's first try too, before it finds the mug empty)
         let sipping = sip.map_or(0.0, |p| bump(p, 0.34, 0.42, 0.60, 0.68)).max(refill.map_or(0.0, |p| 0.8 * bump(p, 0.16, 0.20, 0.25, 0.29)));
 
+        // head, sway and ears ease from where the last activity left them, like the paws
+        let droop = if problem { 1.0 } else { 0.7 * anger };
+        let mut head = [hy, sway, droop];
+        if let Some((t0, h0)) = self.head_blend {
+            let w = smooth(((t - t0) / BLEND_SECS) as f32);
+            if w >= 1.0 {
+                self.head_blend = None;
+            } else {
+                head = std::array::from_fn(|i| h0[i] + (head[i] - h0[i]) * w);
+            }
+        }
+        self.last_head = head;
+        let [hy, sway, droop] = head;
+        // the eyes follow where they should be: lids come down before they shut (nap, sip, yawn, stretch, the pleased
+        // full mug) and lift again after; a blink stays quick
+        let close = if busy { 0.0 } else { 1.0f32 }
+            .max(sip.map_or(0.0, |p| bump(p, 0.26, 0.38, 0.66, 0.76)))
+            .max(if pleased { 1.0 } else { 0.0 })
+            .max(yawn)
+            .max(reach);
+        let k = 1.0 - (-dt * 12.0).exp();
+        for (e, goal) in self.eyes.iter_mut().zip([look, lid, close]) {
+            *e += (goal - *e) * k;
+        }
+        let [look, lid, close] = self.eyes;
+
         Pose {
             hy,
             sway,
             // asleep, or squeezed shut with joy while cheering
-            eyes_closed: !busy || blink || drinking || pleased || yawn > 0.4 || reach > 0.6,
+            eyes_closed: blink || close > 0.9,
             look,
             twitch,
             twitch_ear: self.twitch_ear,
             l,
             r,
             cheer,
-            droop: if problem { 1.0 } else { 0.7 * anger },
-            lid: if drinking { 0.0 } else { lid },
+            droop,
+            lid: lid.max(close),
             sip,
             mug,
             notes,
@@ -2602,6 +2638,64 @@ mod bench {
         }
         eprintln!("PAW_JUMP {:.1} at {}", worst.0, worst.1);
         assert!(worst.0 <= 16.0, "a paw jumped {:.1} at {}", worst.0, worst.1);
+    }
+
+    /// Head and eyes never jump: across random status changes, naps and events, no 30 fps frame moves the head, the
+    /// sway, the gaze or the lids more than a small step, and the eyes only shut (blinks aside) once the lids are down.
+    #[test]
+    fn head_and_eyes_never_jump() {
+        let mut s = scene("Writing release notes", "Orange tabby");
+        s.brain.next_event = 2.0;
+        let mut rng: u64 = 0x1234_5678_9abc_def1;
+        let (mut next, mut last): (f64, Option<[f32; 4]>) = (0.0, None);
+        let mut worst = [0.0f32; 4];
+        for i in 0..(30 * 60 * 60) {
+            let t = i as f64 / 30.0;
+            if t >= next {
+                let r = xorshift(&mut rng);
+                let status = MOODS[(r * MOODS.len() as f64) as usize];
+                s.set_status(&format!("{status} {}", (r * 1000.0) as u32 % 3), t);
+                next = t + 0.3 + xorshift(&mut rng) * 9.0;
+            }
+            let p = s.update(t);
+            let now = [p.hy, p.sway, p.look, p.lid];
+            if let Some(l) = last {
+                for k in 0..4 {
+                    worst[k] = worst[k].max((now[k] - l[k]).abs());
+                }
+            }
+            last = Some(now);
+        }
+        eprintln!("HEAD_JUMP hy {:.2} sway {:.2} look {:.2} lid {:.2}", worst[0], worst[1], worst[2], worst[3]);
+        assert!(worst[0] <= 3.0 && worst[1] <= 3.0 && worst[2] <= 3.5 && worst[3] <= 0.4, "{worst:?}");
+    }
+
+    /// A yawn in the waiting slump: the lids come down before the eyes shut, and the head eases back after.
+    #[test]
+    fn a_yawn_eases_in_and_out() {
+        let mut s = scene("Waiting: CI", "Orange tabby");
+        s.brain.next_event = f64::MAX;
+        let mut t = 0.0;
+        while t < 10.0 {
+            s.update(t);
+            t += 1.0 / 30.0;
+        }
+        // no blinks: they stay quick on purpose
+        s.next_blink = f64::MAX;
+        s.brain.force(Event::Yawn, t);
+        let mut last = s.update(t);
+        let mut shut = false;
+        while t < 13.2 {
+            t += 1.0 / 30.0;
+            let p = s.update(t);
+            assert!((p.hy - last.hy).abs() <= 1.5, "head jumped at t={t:.2}: {} -> {}", last.hy, p.hy);
+            if p.eyes_closed && !last.eyes_closed && p.yawn > 0.0 {
+                assert!(last.lid > 0.75, "eyes shut with the lids at {} (t={t:.2})", last.lid);
+                shut = true;
+            }
+            last = p;
+        }
+        assert!(shut, "the yawn never closed the eyes");
     }
 
     /// A rare event pauses the whiteboard drawing: it carries on where it stopped.
