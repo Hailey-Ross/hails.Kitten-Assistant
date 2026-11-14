@@ -344,22 +344,35 @@ impl Scene {
                 c.stroke(&line(lx + 5.7, ly + 5.7, lx + 11.0, ly + 11.0), SAND, 3.0);
             }
             2 => {
-                // an open book, its pages turning
-                c.fill(&rrect(207.0, 131.0, 31.0, 40.0, 1.5), PAPER);
-                c.fill(&rrect(238.0, 131.0, 31.0, 40.0, 1.5), PAPER);
-                for (side, s) in [(210.0, 0), (241.0, 9)] {
+                // an open book, its pages turning: the right page folds over the spine and becomes the left one,
+                // its back showing the next page, while a new right page shows under it (pages numbered, so one
+                // turn ends exactly where the next starts)
+                const SPINE: f32 = 238.0;
+                let text = |c: &mut Canvas, x: f32, s: f32, page: i64, fade: f32| {
                     for i in 0..5 {
-                        let len = 18.0 + (hash(i + s) % 7) as f32;
-                        c.fill(&rrect(side, 137.0 + i as f32 * 7.0, len, 2.0, 1.0), TEXT);
+                        let len = 18.0 + (hash(page * 13 + i) % 7) as f32;
+                        c.fill(&rrect(x + 3.0 * s, 137.0 + i as f32 * 7.0, len * s, 2.0, 1.0), TEXT.fade(fade));
                     }
-                }
-                c.stroke(&line(238.0, 131.0, 238.0, 171.0), CASE_SHADE, 1.2);
-                let k = smooth(((t * 0.4).fract() * 1.6).min(1.0));
+                };
+                let cycle = t * 0.4;
+                let n = cycle.floor() as i64;
+                let k = smooth((cycle.fract() / 0.4).min(1.0));
                 let w = 31.0 * (k * PI).cos();
-                if w.abs() > 0.6 {
-                    let (x, ww) = if w > 0.0 { (238.0, w) } else { (238.0 + w, -w) };
-                    c.fill(&rrect(x, 131.0, ww, 40.0, 1.5), Rgba::rgb(250, 248, 240));
-                    c.stroke(&rrect(x, 131.0, ww, 40.0, 1.5), CASE_SHADE, 0.8);
+                c.fill(&rrect(207.0, 131.0, 31.0, 40.0, 1.5), PAPER);
+                c.fill(&rrect(SPINE, 131.0, 31.0, 40.0, 1.5), PAPER);
+                // the left page shows the last spread until the turning sheet lands on it
+                text(c, 207.0, 1.0, if k >= 1.0 { 2 * n + 2 } else { 2 * n }, 1.0);
+                text(c, SPINE, 1.0, if k > 0.0 { 2 * n + 3 } else { 2 * n + 1 }, 1.0);
+                c.stroke(&line(SPINE, 131.0, SPINE, 171.0), CASE_SHADE, 1.2);
+                if k > 0.0 && k < 1.0 && w.abs() > 0.6 {
+                    let s = w.abs() / 31.0;
+                    let (x, page) = if w > 0.0 { (SPINE, 2 * n + 1) } else { (SPINE + w, 2 * n + 2) };
+                    // a little shade on the sheet while it stands up, its outline only while it moves
+                    let up = (k * PI).sin();
+                    c.fill(&rrect(x, 131.0, w.abs(), 40.0, 1.5), PAPER);
+                    c.fill(&rrect(x, 131.0, w.abs(), 40.0, 1.5), CASE_SHADE.fade(0.18 * up));
+                    text(c, x, s, page, 0.4 + 0.6 * s);
+                    c.stroke(&rrect(x, 131.0, w.abs(), 40.0, 1.5), CASE_SHADE.fade(up), 0.8);
                 }
             }
             3 => {
