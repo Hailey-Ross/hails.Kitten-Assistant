@@ -142,6 +142,7 @@ Details that matter when you write the file yourself:
 kitten-assistant                      start the kitten (watches the status file)
 kitten-assistant say "some text"      write "some text" to the status file
 kitten-assistant idle                 write "idle" to the status file
+kitten-assistant status               print the current status line ("idle" while it naps)
 kitten-assistant quit                 close the running kitten
 kitten-assistant snapshot out.png     render one frame to a PNG, no window
 kitten-assistant update               check for a newer release now and install it
@@ -152,8 +153,17 @@ kitten-assistant help                 show the command summary (in a message box
 - **Forgot `say`?** Text that is not a command is taken as the status line:
   `kitten-assistant "Building"` works like `kitten-assistant say "Building"` and never opens a
   message box, so a script waiting on the call does not get stuck. A status that is exactly one
-  command word (`quit`, `update`, `version`, `help`, `snapshot`) runs that command instead, so
-  use `say` for those.
+  command word (`quit`, `update`, `version`, `help`, `snapshot`, `status`) runs that command
+  instead, so use `say` for those.
+
+- **`status` prints the line the kitten shows**, read the same way the kitten reads it (the
+  first line, trimmed), or `idle` when the file is empty, missing or says `idle`. It works with
+  no kitten running and takes `--status FILE` like `say`. It is the one command that prints to
+  the terminal. Bash, Command Prompt and Python get the line as usual. In PowerShell, pipe it on:
+  `kitten-assistant status | Write-Output` shows it, and
+  `$line = (kitten-assistant status | Out-String).Trim()` keeps it in a variable. A plain
+  `$line = kitten-assistant status` comes back empty, because Windows PowerShell gives a
+  windowed app nothing to print to unless its output goes into a pipe.
 
 - **Never start a status with `--`.** Anything that starts with `--` is read as an option, even
   inside quotes and even after `say`. `kitten-assistant "--check-assets hang"` or
@@ -184,7 +194,7 @@ kitten-assistant help                 show the command summary (in a message box
 - `quit` closes the running kitten wherever it is. It does nothing if none is running.
 - Only one kitten runs at a time. Starting a second one does nothing, so it is safe to put
   `kitten-assistant` at the top of every script.
-- The exe is a windowed app, so it prints nothing to the terminal: `help`, `version` and errors
+- The exe is a windowed app, so apart from `status` it prints nothing to the terminal: `help`, `version` and errors
   (for example a status folder that does not exist) show a message box, and the call does not
   return until it is closed. Errors are also written to `%TEMP%\kitten-assistant.log`, except
   a mistyped or unknown option (see above), which only shows the message box.

@@ -59,11 +59,13 @@ Update problems are written to `%TEMP%\kitten-assistant.log`.
 kitten-assistant say "Building release 1.2"
 kitten-assistant "Building release 1.2"
 kitten-assistant idle
+kitten-assistant status
 kitten-assistant quit
 ```
 
-- `say` writes your line to the status file; text that isn't a command works the same without `say`. A status that is exactly one command word (`quit`, `update`, `version`, `help`, `snapshot`) runs that command instead, so use `say` for those.
+- `say` writes your line to the status file; text that isn't a command works the same without `say`. A status that is exactly one command word (`quit`, `update`, `version`, `help`, `snapshot`, `status`) runs that command instead, so use `say` for those.
 - `idle` sends the kitten back to its nap. Always end a job with it, or the kitten keeps typing.
+- `status` prints the line the kitten is showing right now, or `idle` while it naps. In PowerShell, pipe it on (`kitten-assistant status | Write-Output`, or `$line = kitten-assistant status | Out-String`): a plain `$line = kitten-assistant status` gets nothing.
 - The bubble's timer starts again whenever the text changes. Saying the same line again keeps the count going.
 - Short lines read best (about 50 characters fit; longer text is cut to two lines). Put the useful words first.
 - **In PowerShell, add `| Out-Null`** (`kitten-assistant say "Backup" | Out-Null`), or the next line of your script can run before the status is written.

@@ -102,7 +102,12 @@ Commands (add `--status "<path>"` if the setup check found one):
 ```
 kitten-assistant say "Fixing login timeout: running tests"
 kitten-assistant idle
+kitten-assistant status
 ```
+
+`status` prints the line the kitten shows now (`idle` while it naps): use it to check what is up
+before you replace someone else's line. In PowerShell pipe it on
+(`kitten-assistant status | Write-Output`); a plain `$x = kitten-assistant status` gets nothing.
 
 **In PowerShell, pipe each call to `Out-Null`:**
 
