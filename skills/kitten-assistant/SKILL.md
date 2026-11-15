@@ -135,8 +135,19 @@ mark is fine) and replace the file, do not append.
 
 ## How to write the line
 
-- **Short:** about 50 characters. The bubble shows two lines of about 35 characters and wraps
-  at word breaks, then cuts the rest with "…"; past about 65 characters the end is usually lost.
+- **Specific, so the user knows exactly where you are:** which part of the plan, which item of
+  how many, its name, the stage within it, and live counts:
+  `Building: part 1, game 5 of 6 (Ultra Sun), compiling 277/574 (48%)` beats
+  `Waiting: part 1, building`. Drop filler words, not facts. The bubble shows two lines of about
+  35 characters and wraps at word breaks, then cuts the rest with "…", so keep the counts within
+  the first 65 characters or so.
+- **Long background jobs get a watcher.** For a job over a few minutes that you are not stepping
+  through yourself, start a small hidden script that reads the job's real progress (its log, its
+  output folder, its process) every ~15 seconds and writes that line with its own `--session`,
+  so its work line outranks a `Waiting` line from the same job. Stop it when the job ends. In
+  PowerShell, quote the script path inside the arguments
+  (`Start-Process powershell -ArgumentList '-File', "`"$path`""`): a path with a space, passed
+  unquoted, never runs.
 - **Most useful words first:** `Tests: 3 of 12 suites` beats `Currently running the test suites`.
 - **Plain words the user recognizes:** the task they asked for, the step you are on. No
   internal ids or tool names unless the user uses them too.
