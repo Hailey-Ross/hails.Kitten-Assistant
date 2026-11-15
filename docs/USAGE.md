@@ -142,7 +142,7 @@ Details that matter when you write the file yourself:
 kitten-assistant                      start the kitten (watches the status file)
 kitten-assistant say "some text"      write "some text" to the status file
 kitten-assistant idle                 write "idle" to the status file
-kitten-assistant status               print the current status line ("idle" while it naps)
+kitten-assistant status               print the line the kitten shows, then every other busy line
 kitten-assistant quit                 close the running kitten
 kitten-assistant snapshot out.png     render one frame to a PNG, no window
 kitten-assistant update               check for a newer release now and install it
@@ -208,6 +208,7 @@ kitten-assistant help                 show the command summary (in a message box
 | Option          | Used by        | Meaning                                                         |
 |-----------------|----------------|-----------------------------------------------------------------|
 | `--status FILE` | run, say, idle | the status file (see [section 5](#5-choosing-a-status-file))    |
+| `--session NAME`| say, idle      | this program's own status line (see [section 5](#5-choosing-a-status-file)); also `KITTEN_SESSION` |
 | `--scale N`     | run, snapshot  | size multiplier; default: right-click > Size, else the screen's DPI (snapshot: 2) |
 | `--monitor N`   | run            | start on display N (the number in Windows' Display settings) and save it as the default |
 | `--x N --y N`   | run            | window position in screen pixels; default bottom-right of the default display, above its taskbar |

@@ -42,9 +42,19 @@ you are still working and on what.
 
    If the user has said they do not want it started for them, skip this and only write the
    status file.
-4. If the exe cannot be found and the user does not answer, carry on with the task without
+4. **Name your session.** Several agents or programs can share one kitten: give every `say` /
+   `idle` call `--session "<name>"` (or set `KITTEN_SESSION`), with a short, stable name for
+   this session, for example the project or worktree (`--session "skate wt-challenges"`). Each
+   session gets its own line; the kitten shows the one that matters most (a `Failed` line
+   first, then work, then `Waiting`, the newest of those), adds "+N more" for the others, and
+   naps only when every session is idle, so one session's `idle` no longer hides another's
+   build. `idle` with a session removes just that session's line. `kitten-assistant status`
+   prints every busy line. Lines untouched for 3 hours are dropped as left over. A kitten from
+   before sessions answers `--session` with an "unknown option" message box: update it first
+   (step 6), and leave the option out if it cannot be updated.
+5. If the exe cannot be found and the user does not answer, carry on with the task without
    the kitten. Never let the kitten block the real work.
-5. The moods below need a recent kitten. `kitten-assistant update` checks for a newer release
+6. The moods below need a recent kitten. `kitten-assistant update` checks for a newer release
    and installs it (the running kitten restarts on the new one); the user can also right-click
    the kitten > Check for Update.
 

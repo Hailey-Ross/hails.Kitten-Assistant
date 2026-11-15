@@ -10,6 +10,7 @@ mod brain;
 mod canvas;
 mod menu;
 mod scene;
+mod sessions;
 mod update;
 
 use std::path::{Path, PathBuf};
@@ -21,7 +22,7 @@ const USAGE: &str = "\
 kitten-assistant                      run the kitten (watches the status file)
 kitten-assistant say \"some text\"      kitten types, bubble shows the text
 kitten-assistant idle                 kitten naps
-kitten-assistant status               print the current status line (idle when napping)
+kitten-assistant status               print the line the kitten shows, then every other busy program's line
 kitten-assistant quit                close a running kitten
 kitten-assistant snapshot out.png     render one frame to a PNG
 kitten-assistant update               check for a newer stable release now and install it
@@ -29,6 +30,8 @@ kitten-assistant version              show the version
 
 options:
   --status FILE    status file (default: status.txt next to the exe, or %KITTEN_STATUS%)
+  --session NAME   this program's own status line (or %KITTEN_SESSION%): several programs can report at once;
+                   the kitten shows a problem first, then work, then waiting, and naps when all are idle
   --scale N        size multiplier (default: right-click > Size, else the screen DPI)
   --monitor N      start on display N and make it the default (right-click > Monitor does the same)
   --x N --y N      window position (default: bottom-right of the default display)
@@ -48,6 +51,7 @@ struct Opts {
     cmd: String,
     arg: Option<String>,
     status: Option<PathBuf>,
+    session: Option<String>,
     scale: Option<f32>,
     x: Option<i32>,
     y: Option<i32>,
@@ -81,6 +85,7 @@ fn parse() -> Result<Opts, String> {
         let mut val = || it.next().ok_or_else(|| format!("{a} needs a value"));
         match a.as_str() {
             "--status" => o.status = Some(PathBuf::from(val()?)),
+            "--session" => o.session = Some(val()?),
             "--scale" => o.scale = Some(val()?.parse().map_err(|_| "bad --scale")?),
             "--x" => o.x = Some(val()?.parse().map_err(|_| "bad --x")?),
             "--y" => o.y = Some(val()?.parse().map_err(|_| "bad --y")?),
@@ -172,14 +177,30 @@ fn main() {
         }
     };
     let status = status_path(&o);
+    let session = o.session.clone().or_else(|| std::env::var("KITTEN_SESSION").ok()).as_deref().and_then(sessions::clean);
+    let write = |text: &str| match &session {
+        Some(name) => sessions::say(&status, name, text),
+        None => std::fs::write(&status, text).map_err(|e| e.to_string()),
+    };
     let result = match o.cmd.as_str() {
-        "run" => win::run(&o, status),
-        "say" => std::fs::write(&status, o.arg.clone().unwrap_or_default()).map_err(|e| e.to_string()),
-        "idle" => std::fs::write(&status, "idle").map_err(|e| e.to_string()),
-        // the line the kitten shows, as it reads it; `idle` when the file is empty, missing or says so
+        "run" => win::run(&o, status.clone()),
+        "say" => write(&o.arg.clone().unwrap_or_default()),
+        "idle" => match &session {
+            Some(name) => sessions::idle(&status, name),
+            None => std::fs::write(&status, "idle").map_err(|e| e.to_string()),
+        },
+        // the line the kitten shows, then every other busy program's line; `idle` when nothing is busy
         "status" => {
-            let line = read_status(&status);
-            win::print(if line.is_empty() { "idle" } else { &line });
+            let lines = sessions::read_all(&status, read_status, status_age);
+            let text = match sessions::pick(&lines) {
+                None => "idle".to_string(),
+                Some((top, _)) => std::iter::once(top)
+                    .chain(lines.iter().filter(|l| *l != top))
+                    .map(|l| if l.name.is_empty() { l.text.clone() } else { format!("[{}] {}", l.name, l.text) })
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            };
+            win::print(&text);
             Ok(())
         }
         "quit" => {
@@ -200,7 +221,7 @@ fn main() {
                 None => other.to_string(),
             };
             log(&format!("no command `{other}`: taken as say \"{text}\""));
-            std::fs::write(&status, text).map_err(|e| e.to_string())
+            write(&text)
         }
     };
     if let Err(e) = result {
@@ -524,8 +545,14 @@ mod win {
 
         fn poll(&mut self) {
             let t = self.t();
-            let age = if std::mem::take(&mut self.first_poll) { status_age(&self.status) } else { 0.0 };
-            let status = read_status(&self.status);
+            self.first_poll = false;
+            // every program's line: the one that matters most shows, its own age keeps the bubble's clock honest
+            let lines = sessions::read_all(&self.status, read_status, status_age);
+            let (status, age, others) = match sessions::pick(&lines) {
+                Some((l, n)) => (l.text.clone(), l.age, n),
+                None => (String::from("idle"), 0.0, 0),
+            };
+            self.scene.others = others;
             self.scene.set_status_aged(&status, t, age);
             self.last_status = status;
             // a gentle frame rate whatever has the focus: smooth enough while typing, lighter while napping

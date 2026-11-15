@@ -250,7 +250,7 @@ pub enum Mood {
 }
 
 impl Mood {
-    fn of(s: &str) -> Mood {
+    pub fn of(s: &str) -> Mood {
         let word: String = s.chars().take_while(|c| c.is_alphabetic()).collect::<String>().to_lowercase();
         match word.as_str() {
             "waiting" | "wait" => Mood::Waiting,
@@ -684,6 +684,8 @@ pub struct Scene {
     pub patch_seed: u32,
     pub busy: bool,
     pub task: String,
+    /// other programs' busy lines besides `task` (sessions)
+    pub others: usize,
     pub mood: Mood,
     /// which typing screen shows (0..SCREENS), picked at random per status line
     pub screen: usize,
@@ -743,6 +745,7 @@ impl Scene {
         Scene {
             busy: false,
             task: String::new(),
+            others: 0,
             mood: Mood::Busy,
             screen: 0,
             looks: [0; LOOK_SLOTS],
@@ -2616,11 +2619,14 @@ impl Scene {
         } else if self.busy {
             let m = ((t - self.since) / 60.0).max(0.0) as i64;
             let (start, so_far) = if self.mood == Mood::Waiting { ("just started", "waiting") } else { ("just started", "so far") };
-            let sub = match m {
+            let mut sub = match m {
                 0 => start.to_string(),
                 1..=59 => format!("{m} min {so_far}"),
                 _ => format!("{} h {} min {so_far}", m / 60, m % 60),
             };
+            if self.others > 0 {
+                sub.push_str(&format!(" \u{b7} +{} more", self.others));
+            }
             (self.task.clone(), Some(sub))
         } else if p.cheer.is_some() {
             (if p.up_to_date.is_some() { "up to date!" } else { "all done!" }.to_string(), None)
