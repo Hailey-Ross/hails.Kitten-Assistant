@@ -237,6 +237,25 @@ order:
 The default is the easiest: run the kitten and `say` from the same exe and they agree. A fixed
 path such as `C:\jobs\status.txt` is better once several scripts or tools share the kitten.
 
+### Several programs at once (sessions)
+
+When more than one script, tool or agent reports to the same kitten, give each one a name with
+`--session NAME` (or the `KITTEN_SESSION` environment variable), for example
+`kitten-assistant --session backup "Backing up photos"`. Each name gets its own line in a
+`sessions` folder next to the status file, so one program's `idle` never hides another's work:
+
+- The kitten shows the line that matters most: a problem (`Failed`, `Error`, `Problem`) first,
+  then work, then `Waiting`; among those, the newest. The bubble adds "+N more" when other
+  programs are busy too.
+- It naps only when every program is idle. `idle` with a session removes just that line.
+- `kitten-assistant status` prints the shown line first, then every other busy line with its
+  name in brackets.
+- A line nobody has touched for 3 hours is treated as left over from a program that ended
+  without `idle`, and ignored.
+- Calls without `--session` keep using the status file itself, which counts as one more line.
+- A kitten from before sessions does not know `--session` and shows an "unknown option" message
+  box: update it first.
+
 Set `KITTEN_STATUS` once for your user so every terminal and script uses the same file:
 
 ```powershell
