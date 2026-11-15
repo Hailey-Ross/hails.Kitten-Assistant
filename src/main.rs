@@ -553,6 +553,11 @@ mod win {
                 None => (String::from("idle"), 0.0, 0),
             };
             self.scene.others = others;
+            // the other lines, newest first, for the bubble's "+N more" rotation
+            let top = sessions::pick(&lines).map(|(l, _)| l.clone());
+            let mut rest: Vec<&sessions::Line> = lines.iter().filter(|l| Some(*l) != top.as_ref()).collect();
+            rest.sort_by(|a, b| a.age.total_cmp(&b.age));
+            self.scene.other_lines = rest.into_iter().map(|l| (l.name.clone(), l.text.clone())).collect();
             self.scene.set_status_aged(&status, t, age);
             self.last_status = status;
             // a gentle frame rate whatever has the focus: smooth enough while typing, lighter while napping
@@ -1034,10 +1039,29 @@ mod win {
 
     unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
         match msg {
-            // the whole kitten drags like a title bar (see-through pixels click through)
+            // the whole kitten drags like a title bar (see-through pixels click through), except the bubble's
+            // "+N more", which takes a click
             WM_NCHITTEST => {
                 let r = DefWindowProcW(hwnd, msg, wp, lp);
-                if r == HTCLIENT as LRESULT { HTCAPTION as LRESULT } else { r }
+                if r != HTCLIENT as LRESULT {
+                    return r;
+                }
+                let mut p = POINT { x: (lp & 0xFFFF) as i16 as i32, y: ((lp >> 16) & 0xFFFF) as i16 as i32 };
+                ScreenToClient(hwnd, &mut p);
+                let more = APP.with(|a| a.try_borrow().ok().and_then(|g| g.as_ref().map(|app| app.scene.more_hit(p.x as f32 / app.sc, p.y as f32 / app.sc))))
+                    .unwrap_or(false);
+                if more { HTCLIENT as LRESULT } else { HTCAPTION as LRESULT }
+            }
+            WM_SETCURSOR if (lp & 0xFFFF) as u32 == HTCLIENT => {
+                SetCursor(LoadCursorW(null_mut(), IDC_HAND));
+                1
+            }
+            WM_LBUTTONUP => {
+                with_app(|a| {
+                    let t = a.t();
+                    a.scene.click_more(t);
+                });
+                0
             }
             WM_NCLBUTTONDBLCLK => 0,
             WM_MOUSEACTIVATE => MA_NOACTIVATE as LRESULT,

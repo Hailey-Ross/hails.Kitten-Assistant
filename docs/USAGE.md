@@ -246,7 +246,8 @@ When more than one script, tool or agent reports to the same kitten, give each o
 
 - The kitten shows the line that matters most: a problem (`Failed`, `Error`, `Problem`) first,
   then work, then `Waiting`; among those, the newest. The bubble adds "+N more" when other
-  programs are busy too.
+  programs are busy too. Click "+N more" and the bubble shows each other program's line in
+  turn, a few seconds each with its name, then goes back; click it again to stop early.
 - It naps only when every program is idle. `idle` with a session removes just that line.
 - `kitten-assistant status` prints the shown line first, then every other busy line with its
   name in brackets.

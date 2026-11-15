@@ -27,6 +27,8 @@ fn arm_drawn() {
 }
 
 pub const W: f32 = 300.0;
+/// Seconds the bubble shows each other program's line after "+N more" is clicked.
+pub const ROTATE_SECS: f64 = 4.0;
 pub const H: f32 = 250.0;
 
 const CX: f32 = 105.0; // kitten center line
@@ -686,6 +688,12 @@ pub struct Scene {
     pub task: String,
     /// other programs' busy lines besides `task` (sessions)
     pub others: usize,
+    /// those lines: (session name, text), for the bubble's rotation
+    pub other_lines: Vec<(String, String)>,
+    /// "+N more" was clicked at this time: the bubble shows each other line in turn, then `task` again
+    pub rotate_from: Option<f64>,
+    /// where the bubble drew its clickable "+N more" (or the rotation's line) last frame: x, y, w, h
+    more_rect: std::cell::Cell<Option<[f32; 4]>>,
     pub mood: Mood,
     /// which typing screen shows (0..SCREENS), picked at random per status line
     pub screen: usize,
@@ -746,6 +754,9 @@ impl Scene {
             busy: false,
             task: String::new(),
             others: 0,
+            other_lines: Vec::new(),
+            rotate_from: None,
+            more_rect: std::cell::Cell::new(None),
             mood: Mood::Busy,
             screen: 0,
             looks: [0; LOOK_SLOTS],
@@ -863,6 +874,23 @@ impl Scene {
         }
         self.busy = busy;
         self.task = if busy { s.to_string() } else { String::new() };
+    }
+
+    /// The other line the rotation shows at `t` (each for `ROTATE_SECS`) (index, name, text), or None when it is not rotating or has gone
+    /// round once.
+    pub fn rotating(&self, t: f64) -> Option<(usize, &str, &str)> {
+        let i = ((t - self.rotate_from?) / ROTATE_SECS).max(0.0) as usize;
+        self.other_lines.get(i).map(|(n, s)| (i, n.as_str(), s.as_str()))
+    }
+
+    /// Point (scene units) on the clickable "+N more" (or the rotating line).
+    pub fn more_hit(&self, x: f32, y: f32) -> bool {
+        self.busy && self.more_rect.get().is_some_and(|[rx, ry, w, h]| x >= rx && x <= rx + w && y >= ry && y <= ry + h)
+    }
+
+    /// "+N more" clicked: start going through the other lines, or stop.
+    pub fn click_more(&mut self, t: f64) {
+        self.rotate_from = if self.rotating(t).is_some() || self.other_lines.is_empty() { None } else { Some(t) };
     }
 
     /// A manual update check found nothing newer: the done moment's cheer with "up to date" on the screen, whatever
@@ -2619,15 +2647,20 @@ impl Scene {
         } else if self.busy {
             let m = ((t - self.since) / 60.0).max(0.0) as i64;
             let (start, so_far) = if self.mood == Mood::Waiting { ("just started", "waiting") } else { ("just started", "so far") };
-            let mut sub = match m {
+            let sub = match m {
                 0 => start.to_string(),
                 1..=59 => format!("{m} min {so_far}"),
                 _ => format!("{} h {} min {so_far}", m / 60, m % 60),
             };
-            if self.others > 0 {
-                sub.push_str(&format!(" \u{b7} +{} more", self.others));
+            match self.rotating(t) {
+                // "+N more" clicked: the other programs' lines, one after another
+                Some((i, name, text)) => {
+                    let who = if name.is_empty() { String::new() } else { format!("{name} \u{b7} ") };
+                    (text.to_owned(), Some(format!("{who}{} of {} more", i + 1, self.other_lines.len())))
+                }
+                None if self.others > 0 => (self.task.clone(), Some(format!("{sub} \u{b7} +{} more", self.others))),
+                None => (self.task.clone(), Some(sub)),
             }
-            (self.task.clone(), Some(sub))
         } else if p.cheer.is_some() {
             (if p.up_to_date.is_some() { "up to date!" } else { "all done!" }.to_string(), None)
         } else {
@@ -2657,8 +2690,18 @@ impl Scene {
         for (i, l) in lines.iter().enumerate() {
             c.text(bold, ms, bx + 12.0, by + 8.0 + 12.0 + i as f32 * lh, l, col);
         }
+        self.more_rect.set(None);
         if let Some(s) = sub {
-            c.text(regular, ss, bx + 12.0, by + 8.0 + lines.len() as f32 * lh + 10.5, &s, SUB);
+            let base = by + 8.0 + lines.len() as f32 * lh + 10.5;
+            c.text(regular, ss, bx + 12.0, base, &s, SUB);
+            // the clickable part: "+N more", or the whole line while it rotates
+            if self.busy && self.others > 0 && p.greet.is_none() {
+                let (x, w) = match s.rfind('+').filter(|_| self.rotating(t).is_none()) {
+                    Some(at) => (bx + 12.0 + measure(regular, ss, &s[..at]), measure(regular, ss, &s[at..])),
+                    None => (bx + 12.0, measure(regular, ss, &s)),
+                };
+                self.more_rect.set(Some([x - 3.0, base - 11.0, w + 6.0, 15.0]));
+            }
         }
     }
 }
@@ -2677,6 +2720,23 @@ mod bench {
         s.patch_seed = 7;
         s.set_status(status, 0.0);
         s
+    }
+
+    /// "+N more" clicked: each other line shows for ROTATE_SECS, then the bubble is back on its own line; a click
+    /// while it goes round stops it.
+    #[test]
+    fn more_rotates_through_the_other_lines_once() {
+        let mut s = scene("Building the app", "Orange tabby");
+        s.others = 2;
+        s.other_lines = vec![("ci".into(), "Waiting: CI".into()), (String::new(), "Testing: suite".into())];
+        assert!(s.rotating(1.0).is_none());
+        s.click_more(10.0);
+        assert_eq!(s.rotating(10.5), Some((0, "ci", "Waiting: CI")));
+        assert_eq!(s.rotating(10.0 + ROTATE_SECS + 0.5), Some((1, "", "Testing: suite")));
+        assert!(s.rotating(10.0 + 2.0 * ROTATE_SECS + 0.1).is_none(), "once round, then its own line");
+        s.click_more(30.0);
+        s.click_more(31.0);
+        assert!(s.rotating(31.5).is_none(), "a second click stops it");
     }
 
     /// Every new line of a mood (and every new nap) shows another of its screens than the last time, and over many
