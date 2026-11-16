@@ -139,7 +139,7 @@ mark is fine) and replace the file, do not append.
   how many, its name, the stage within it, and live counts:
   `Building: part 1, game 5 of 6 (Ultra Sun), compiling 277/574 (48%)` beats
   `Waiting: part 1, building`. Drop filler words, not facts. The bubble shows two lines of about
-  35 characters and wraps at word breaks, then cuts the rest with "…", so keep the counts within
+  35 characters and wraps at word breaks; longer text may overfill, then is cut with "…", so keep the counts within
   the first 65 characters or so.
 - **Long background jobs get a watcher.** For a job over a few minutes that you are not stepping
   through yourself, start a small hidden script that reads the job's real progress (its log, its

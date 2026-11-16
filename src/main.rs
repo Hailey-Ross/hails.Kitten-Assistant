@@ -559,6 +559,7 @@ mod win {
             rest.sort_by(|a, b| a.age.total_cmp(&b.age));
             self.scene.other_lines = rest.into_iter().map(|l| (l.name.clone(), l.text.clone())).collect();
             self.scene.set_status_aged(&status, t, age);
+            self.scene.auto_rotate(t);
             self.last_status = status;
             // a gentle frame rate whatever has the focus: smooth enough while typing, lighter while napping
             let ms = if self.scene.busy { 33 } else { 66 };

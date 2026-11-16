@@ -67,7 +67,7 @@ kitten-assistant quit
 - `idle` sends the kitten back to its nap. Always end a job with it, or the kitten keeps typing.
 - `status` prints the line the kitten is showing right now, or `idle` while it naps. In PowerShell, pipe it on (`kitten-assistant status | Write-Output`, or `$line = kitten-assistant status | Out-String`): a plain `$line = kitten-assistant status` gets nothing.
 - The bubble's timer starts again whenever the text changes. Saying the same line again keeps the count going.
-- Short lines read best (about 50 characters fit; longer text is cut to two lines). Put the useful words first.
+- Short lines read best (about 50 characters fit; keep to two lines, longer text may overfill, then is cut). Put the useful words first.
 - **In PowerShell, add `| Out-Null`** (`kitten-assistant say "Backup" | Out-Null`), or the next line of your script can run before the status is written.
 
 > **Never start a status with `--`.** Anything starting with `--` is read as an option, even inside quotes and even after `say`. `kitten-assistant "--check-assets hang"` is an unknown option: the status is not written, and an error message box opens and keeps the call (and any script waiting on it) stuck until someone clicks OK. Put a word in front instead: `kitten-assistant "Check: --check-assets hang"`.

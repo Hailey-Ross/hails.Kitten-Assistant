@@ -130,7 +130,7 @@ Details that matter when you write the file yourself:
   "just started". The bubble then counts "1 min so far", "2 min so far", up to
   "1 h 5 min so far" and beyond. After a restart of the kitten, the count starts from when
   the status file was last written.
-- **Long text is cut to two lines** with "…" at the end. Short lines read best: about 50
+- **Keep text to two lines.** Longer text may overfill a little, then is cut with "…". Short lines read best: about 50
   characters fit. Put the most useful words first ("Tests: 3 of 12 suites" rather than
   "Currently running the test suites, 3 of 12").
 - **Updates show within 2 seconds.** Changes faster than that may be skipped; only what is in
@@ -247,7 +247,8 @@ When more than one script, tool or agent reports to the same kitten, give each o
 - The kitten shows the line that matters most: a problem (`Failed`, `Error`, `Problem`) first,
   then work, then `Waiting`; among those, the newest. The bubble adds "+N more" when other
   programs are busy too. Click "+N more" and the bubble shows each other program's line in
-  turn, a few seconds each with its name, then goes back; click it again to stop early.
+  turn, a few seconds each with its name, then goes back; click it again to stop early. It
+  also goes round them on its own every 95 to 120 seconds.
 - It naps only when every program is idle. `idle` with a session removes just that line.
 - `kitten-assistant status` prints the shown line first, then every other busy line with its
   name in brackets.
@@ -497,7 +498,7 @@ Leave out `--bg` for a transparent background.
 | The kitten never wakes up                      | The kitten and your script use different files. Use the same `--status` path or set `KITTEN_STATUS` for both, and restart the kitten after changing the variable. |
 | It wakes up, then naps again a moment later    | Something writes `idle` or an empty file. A batch `echo.>` or an empty `Set-Content` makes an empty file. |
 | It keeps typing after the job ended            | The job stopped before it wrote `idle`. Use `finally` / `trap` ([section 6](#always-go-back-to-idle)). |
-| The text is cut off with "…"                   | Only two lines fit. Shorten the line and put the important words first.        |
+| The text is cut off with "…"                   | Two lines are supported; longer text may overfill, then is cut. Shorten the line and put the important words first.        |
 | It naps although PowerShell wrote the file     | Windows PowerShell's `>` and `Out-File` write UTF-16, which the kitten cannot read. Use `Set-Content` or `kitten-assistant say` ([section 2](#2-how-the-kitten-decides-what-to-show)). |
 | A script hangs on a `kitten-assistant` call    | A message box is waiting for OK (it may be behind other windows). Usually the status started with `--` and was read as an option; see [section 3](#3-commands). `help` and `version` also wait for OK. |
 | The kitten is on the wrong screen             | Right-click it, open **Monitor** and pick the display. Deleting `kitten-assistant.ini` next to the exe forgets this and every other saved choice. |
