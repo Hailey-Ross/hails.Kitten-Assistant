@@ -150,6 +150,7 @@ kitten-assistant version              show the version (in a message box)
 kitten-assistant help                 show the command summary (in a message box; also -h, --help)
 ```
 
+- **No kitten running?** `say` starts one, watching the same status file. `idle` does not.
 - **Forgot `say`?** Text that is not a command is taken as the status line:
   `kitten-assistant "Building"` works like `kitten-assistant say "Building"` and never opens a
   message box, so a script waiting on the call does not get stuck. A status that is exactly one
@@ -529,7 +530,8 @@ src/canvas.rs   drawing helpers (shapes, outline, text, word wrap)
 src/update.rs   the self-updater
 ```
 
-A plain `cargo build` shows "(local build)" under `version` and never updates itself.
+A plain `cargo build` is build 0, a dev build: it shows "(dev build)" under `version` and in the
+right-click menu, and never updates itself.
 `powershell -File tools\build-local.ps1` builds it with a build number (the newest Actions run
 plus one, read with the GitHub CLI, or `-Build <n>`): it keeps itself until a release built after
 it comes out, then updates to it. `cargo test --release` runs the tests.

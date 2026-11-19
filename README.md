@@ -190,7 +190,7 @@ cargo build --release
 cargo test --release
 ```
 
-The exe lands in `target\release\kitten-assistant.exe`. A plain `cargo build` shows "(local build)" under `version` and never updates itself. `powershell -File tools\build-local.ps1` builds it with a build number (the newest Actions run plus one, read with the GitHub CLI, or `-Build <n>`): that kitten keeps itself until a release built after it comes out, then updates to it.
+The exe lands in `target\release\kitten-assistant.exe`. A plain `cargo build` is build 0, a dev build: it shows "(dev build)" under `version` and in the right-click menu, and never updates itself. `powershell -File tools\build-local.ps1` builds it with a build number (the newest Actions run plus one, read with the GitHub CLI, or `-Build <n>`): that kitten keeps itself until a release built after it comes out, then updates to it.
 
 Changing how it draws? `cargo test --release -- --ignored --nocapture --test-threads=1 frame_` prints the time per frame for every mood (`FRAME_COST`), per drawing step (`FRAME_PART`) and one hash over the pixels of many frames (`FRAME_HASH`). A speed-up that leaves the hash the same draws exactly the same picture.
 

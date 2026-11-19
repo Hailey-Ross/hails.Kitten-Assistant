@@ -11,6 +11,10 @@ type and shows the text in a bubble with the time since it began; `idle`, empty 
 makes it nap. Keeping that line current lets the user glance at the screen and see whether
 you are still working and on what.
 
+**Every `say` and `idle` you run carries `--session "<your name>"`** (step 4). Without it, all
+agents write the same shared line and overwrite each other: the user sees one status while two
+agents work, and one agent's `idle` hides the other's work.
+
 ## Setup check (once per session)
 
 1. **Find the exe.** Check without running it: `Get-Command kitten-assistant` (PowerShell) or
@@ -32,9 +36,10 @@ you are still working and on what.
    - PowerShell: `Get-Process kitten-assistant -ErrorAction SilentlyContinue`
    - bash: `tasklist //FI "IMAGENAME eq kitten-assistant.exe" | grep -i kitten`
 
-   If it is not running, start it detached so it does not block you. It is a single instance,
-   so a second start does nothing. Use the full path if it is not on the `PATH`, and add
-   `--status "<path>"` if you use a custom file:
+   A recent kitten starts itself on the first `say` when none is running (`idle` does not), so
+   this step is only needed for an older one. If it is not running, start it detached so it
+   does not block you. It is a single instance, so a second start does nothing. Use the full
+   path if it is not on the `PATH`, and add `--status "<path>"` if you use a custom file:
    - PowerShell: `Start-Process "<path>\kitten-assistant.exe"`
    - bash: `"<path>/kitten-assistant.exe" &` (it is a windowed app and does not hold the
      terminal). Avoid `cmd //c start "" ...` from Git Bash: the empty title argument gets
@@ -42,16 +47,25 @@ you are still working and on what.
 
    If the user has said they do not want it started for them, skip this and only write the
    status file.
-4. **Name your session.** Several agents or programs can share one kitten: give every `say` /
-   `idle` call `--session "<name>"` (or set `KITTEN_SESSION`), with a short, stable name for
-   this session, for example the project or worktree (`--session "skate wt-challenges"`). Each
-   session gets its own line; the kitten shows the one that matters most (a `Failed` line
-   first, then work, then `Waiting`, the newest of those), adds "+N more" for the others, and
-   naps only when every session is idle, so one session's `idle` no longer hides another's
-   build. `idle` with a session removes just that session's line. `kitten-assistant status`
-   prints every busy line. Lines untouched for 3 hours are dropped as left over. A kitten from
+4. **Name your session (required).** Several agents or programs share one kitten, each on its
+   own line. Pick one name now and pass it as `--session "<name>"` on **every** `say` and
+   `idle` for the rest of the conversation, sub-agents and background watchers included:
+   - **Unique to you:** the project plus what you are doing (`--session "skate cas"`,
+     `--session "kitten updater"`). Two agents in the same project need different names; if
+     `kitten-assistant status` already shows your name in brackets from another agent, pick
+     another.
+   - **Stable:** the same name all conversation long, so each `say` replaces your own line
+     and your final `idle` removes it. A new name per step leaves stale lines behind.
+   - **Everywhere:** a script or watcher you start sets `KITTEN_SESSION` or passes the flag
+     too; give a watcher its own name (`"skate cas build"`).
+
+   The kitten shows the line that matters most (a `Failed` line first, then work, then
+   `Waiting`, the newest of those), adds "+N more" for the others, and naps only when every
+   session is idle. `idle` with a session removes just that line. `kitten-assistant status`
+   prints every busy line, each with its `[name]`; a line without a name came from a call
+   that left the flag out. Lines untouched for 3 hours are dropped as left over. A kitten from
    before sessions answers `--session` with an "unknown option" message box: update it first
-   (step 6), and leave the option out if it cannot be updated.
+   (step 6), and leave the option out only if it cannot be updated.
 5. If the exe cannot be found and the user does not answer, carry on with the task without
    the kitten. Never let the kitten block the real work.
 6. The moods below need a recent kitten. `kitten-assistant update` checks for a newer release
@@ -107,22 +121,22 @@ The kitten also takes little breaks on its own (a sip of coffee, a look around, 
 stretch, a yawn or a coffee refill); they need nothing from you, and a new line that comes in
 during one shows once it ends.
 
-Commands (add `--status "<path>"` if the setup check found one):
+Commands (always with your `--session`; add `--status "<path>"` if the setup check found one):
 
 ```
-kitten-assistant say "Fixing login timeout: running tests"
-kitten-assistant idle
+kitten-assistant say "Fixing login timeout: running tests" --session "webapp login"
+kitten-assistant idle --session "webapp login"
 kitten-assistant status
 ```
 
-`status` prints the line the kitten shows now (`idle` while it naps): use it to check what is up
-before you replace someone else's line. In PowerShell pipe it on
-(`kitten-assistant status | Write-Output`); a plain `$x = kitten-assistant status` gets nothing.
+`status` prints the line the kitten shows now, then every other busy line with its session
+name (`idle` while it naps). In PowerShell pipe it on (`kitten-assistant status | Write-Output`);
+a plain `$x = kitten-assistant status` gets nothing.
 
 **In PowerShell, pipe each call to `Out-Null`:**
 
 ```powershell
-kitten-assistant say "Fixing login timeout: running tests" | Out-Null
+kitten-assistant say "Fixing login timeout: running tests" --session "webapp login" | Out-Null
 ```
 
 PowerShell does not wait for a windowed app, so without it the call returns before the file is
@@ -139,8 +153,8 @@ mark is fine) and replace the file, do not append.
   how many, its name, the stage within it, and live counts:
   `Building: part 1, game 5 of 6 (Ultra Sun), compiling 277/574 (48%)` beats
   `Waiting: part 1, building`. Drop filler words, not facts. The bubble shows two lines of about
-  35 characters and wraps at word breaks; longer text may overfill, then is cut with "…", so keep the counts within
-  the first 65 characters or so.
+  35 characters and wraps at word breaks; longer text may overfill, then is cut with "…", so
+  keep the counts within the first 65 characters or so.
 - **Long background jobs get a watcher.** For a job over a few minutes that you are not stepping
   through yourself, start a small hidden script that reads the job's real progress (its log, its
   output folder, its process) every ~15 seconds and writes that line with its own `--session`,
@@ -164,19 +178,19 @@ mark is fine) and replace the file, do not append.
 Examples:
 
 ```
-kitten-assistant say "Upgrading dependencies"
-kitten-assistant say "Upgrade: fixing 3 compile errors"
-kitten-assistant say "Upgrade: running test suite"
-kitten-assistant idle
+kitten-assistant say "Upgrading dependencies" --session "api upgrade"
+kitten-assistant say "Upgrade: fixing 3 compile errors" --session "api upgrade"
+kitten-assistant say "Upgrade: running test suite" --session "api upgrade"
+kitten-assistant idle --session "api upgrade"
 ```
 
 ## Several assistants or jobs
 
-There is one kitten and one line. If more than one assistant or job could write to it, only
-the one the user started most recently (or the one the user named) owns it. Do not overwrite a
-line you did not write unless the user asked you to take over. Remember the last line you
-wrote. When you are done, read the file first and set `idle` only if it still holds that line;
-if it holds another job's line, leave it.
+There is one kitten with one line per session. Your `--session` line is yours alone: write and
+idle it freely. Never write or idle another session's line, and never write without
+`--session` (that is the shared line, which belongs to plain scripts and older tools). If you
+find your own work on the shared line because an earlier call left the flag out, set it to
+`idle` once you have moved to your session line, but only if it still holds your text.
 
 A line can also be left over from a job that has ended, for example an earlier session that
 stopped without writing `idle`. If you are not sure it is still live, ask the user before

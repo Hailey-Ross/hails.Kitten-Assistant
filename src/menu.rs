@@ -66,6 +66,22 @@ pub struct Info {
     pub topmost: bool,
 }
 
+fn version_text() -> String {
+    match crate::update::build() {
+        0 => format!("Version {} \u{b7} dev build", crate::update::VERSION),
+        b => format!("Version {} \u{b7} build {b}", crate::update::VERSION),
+    }
+}
+
+impl Row {
+    /// Text only (the version line): no hover, no click, the arrow keys skip it.
+    fn inert(&self) -> bool {
+        self.act.is_none() && self.go.is_none()
+    }
+}
+
+const INFO_ROW: f32 = 22.0;
+
 /// Room around the card for its shadow, in design pixels.
 pub const MARGIN: f32 = 22.0;
 const ROW: f32 = 30.0;
@@ -195,6 +211,7 @@ impl Menu {
                 Row { go: Some(Page::Size), ..row("Size", Icon::Size) },
                 Row { act: Some(Action::Topmost), check: Some(self.info.topmost), ..row("Always on top", Icon::Pin) },
                 Row { act: Some(Action::CheckUpdate), gap: true, ..row("Check for Update", Icon::Update) },
+                row(&version_text(), Icon::None),
                 Row { act: Some(Action::Quit), ..row("Quit", Icon::Quit) },
             ],
             Page::Monitor => self.info.monitors.iter().enumerate()
@@ -234,8 +251,9 @@ impl Menu {
             if r.gap {
                 y += 7.0;
             }
-            let s = (y, ROW);
-            y += ROW;
+            let h = if r.inert() { INFO_ROW } else { ROW };
+            let s = (y, h);
+            y += h;
             s
         }).collect()
     }
@@ -278,7 +296,8 @@ impl Menu {
             return (hit, false);
         }
         let rows = self.rows(self.page);
-        (Self::row_spans(&rows, self.page).iter().position(|&(ry, rh)| y >= ry && y < ry + rh), false)
+        let hit = Self::row_spans(&rows, self.page).iter().position(|&(ry, rh)| y >= ry && y < ry + rh);
+        (hit.filter(|&i| !rows[i].inert()), false)
     }
 
     pub fn mouse_move(&mut self, x: f32, y: f32) {
@@ -346,9 +365,13 @@ impl Menu {
         let n = self.count();
         let grid = self.page == Page::Color;
         let cur = self.hover;
+        let inert: Vec<bool> = if grid { vec![false; n] } else { self.rows(self.page).iter().map(Row::inert).collect() };
         let step = |d: isize| -> Option<usize> {
             let start = cur.map_or(if d > 0 { -1 } else { n as isize }, |c| c as isize);
-            let next = start + d;
+            let mut next = start + d;
+            while (0..n as isize).contains(&next) && inert[next as usize] {
+                next += d;
+            }
             (0..n as isize).contains(&next).then_some(next as usize).or(cur)
         };
         match key {
@@ -542,7 +565,11 @@ impl Menu {
             let x0 = if row.icon == Icon::None { 16.0 } else { 38.0 } + 2.0 * squish;
             icon(&mut c, row.icon, 22.0, mid, live && self.hover == Some(i), t);
             if let Some(font) = self.regular.as_ref() {
-                c.text(font, 12.5, x0, mid + 4.5, &row.label, if row.act == Some(Action::Quit) { Rgba::rgb(196, 80, 80) } else { INK });
+                if row.inert() {
+                    c.text(font, 11.0, 14.5, mid + 4.0, &row.label, SOFT);
+                } else {
+                    c.text(font, 12.5, x0, mid + 4.5, &row.label, if row.act == Some(Action::Quit) { Rgba::rgb(196, 80, 80) } else { INK });
+                }
             }
             if row.go.is_some() {
                 let nudge = if live && self.hover == Some(i) { 2.0 } else { 0.0 };

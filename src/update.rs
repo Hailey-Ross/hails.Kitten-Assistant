@@ -16,15 +16,25 @@ pub fn build() -> u32 {
 /// Whether this exe updates itself: any build with a build number (a release, a per-push CI build, a local build
 /// made with tools/build-local.ps1). It only ever takes a release whose version and build are higher than its own
 /// (`newer`), so a build newer than the latest release keeps itself. A build without a number (a plain
-/// `cargo build`) never updates: it could be any code.
+/// `cargo build`) is a dev build and never updates: it could be any code.
 pub fn updates_itself() -> bool {
-    build() > 0
+    !is_dev_build()
 }
 
-/// "0.1.1 (build 42)", or "0.1.1 (local build)".
+/// Build 0: no build number, so a dev build.
+pub fn is_dev_build() -> bool {
+    build() == 0
+}
+
+/// Whether a release (`version`, `build`) replaces the running exe (`current`, `current_build`): never a dev build.
+pub fn takes(version: &str, build: u32, current: &str, current_build: u32) -> bool {
+    current_build != 0 && newer(version, build, current, current_build)
+}
+
+/// "0.1.1 (build 42)", or "0.1.1 (dev build)".
 pub fn label() -> String {
     match build() {
-        0 => format!("{VERSION} (local build)"),
+        0 => format!("{VERSION} (dev build)"),
         b => format!("{VERSION} (build {b})"),
     }
 }
@@ -139,7 +149,7 @@ pub fn check_and_stage() -> Result<Option<String>, String> {
     let release = parse_release(&json).ok_or("the latest release lacks release.json, kitten-assistant.exe or its .sha256")?;
     let info = String::from_utf8_lossy(&curl(&[&release.info])?).into_owned();
     let (version, build_no) = parse_info(&info).ok_or("release.json has no version / build")?;
-    if !newer(&version, build_no, VERSION, build()) {
+    if !takes(&version, build_no, VERSION, build()) {
         return Ok(None);
     }
     let want = String::from_utf8_lossy(&curl(&[&release.sha])?).split_whitespace().next().unwrap_or("").to_ascii_lowercase();
@@ -185,6 +195,13 @@ mod tests {
         // a local build numbered after the last CI run (22) never takes release build 21; the next release does
         assert!(!newer("0.1.1", 21, "0.1.1", 22));
         assert!(newer("0.1.1", 23, "0.1.1", 22));
+    }
+
+    #[test]
+    fn a_dev_build_never_takes_a_release() {
+        assert!(!takes("0.1.1", 40, "0.1.1", 0));
+        assert!(!takes("9.0.0", 1, "0.1.1", 0));
+        assert!(takes("0.1.1", 42, "0.1.1", 41));
     }
 
     #[test]

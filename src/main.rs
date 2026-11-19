@@ -20,7 +20,7 @@ use tiny_skia::Pixmap;
 
 const USAGE: &str = "\
 kitten-assistant                      run the kitten (watches the status file)
-kitten-assistant say \"some text\"      kitten types, bubble shows the text
+kitten-assistant say \"some text\"      kitten types, bubble shows the text (starts the kitten if none runs)
 kitten-assistant idle                 kitten naps
 kitten-assistant status               print the line the kitten shows, then every other busy program's line
 kitten-assistant quit                close a running kitten
@@ -178,9 +178,15 @@ fn main() {
     };
     let status = status_path(&o);
     let session = o.session.clone().or_else(|| std::env::var("KITTEN_SESSION").ok()).as_deref().and_then(sessions::clean);
-    let write = |text: &str| match &session {
-        Some(name) => sessions::say(&status, name, text),
-        None => std::fs::write(&status, text).map_err(|e| e.to_string()),
+    let write = |text: &str| {
+        let r = match &session {
+            Some(name) => sessions::say(&status, name, text),
+            None => std::fs::write(&status, text).map_err(|e| e.to_string()),
+        };
+        if r.is_ok() && !text.trim().is_empty() && !text.trim().eq_ignore_ascii_case("idle") {
+            win::wake(&status);
+        }
+        r
     };
     let result = match o.cmd.as_str() {
         "run" => win::run(&o, status.clone()),
@@ -465,6 +471,36 @@ mod win {
             let _ = out.flush();
         } else if let Ok(mut con) = std::fs::OpenOptions::new().write(true).open("CONOUT$") {
             let _ = writeln!(con, "{text}");
+        }
+    }
+
+    /// A busy line was written and no kitten is running: start one watching that status file.
+    pub fn wake(status: &Path) {
+        let c = wide(CLASS);
+        if !unsafe { FindWindowW(c.as_ptr(), null()) }.is_null() {
+            return;
+        }
+        let Ok(exe) = std::env::current_exe() else { return };
+        // the caller's pipes must not leak into the kitten, or `say ... | Out-Null` waits until the kitten quits
+        use windows_sys::Win32::System::Console::{GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE};
+        for which in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+            unsafe {
+                let h = GetStdHandle(which);
+                if !h.is_null() && h != INVALID_HANDLE_VALUE {
+                    SetHandleInformation(h, HANDLE_FLAG_INHERIT, 0);
+                }
+            }
+        }
+        use std::process::Stdio;
+        let spawn = std::process::Command::new(&exe)
+            .arg("--status")
+            .arg(std::path::absolute(status).unwrap_or_else(|_| status.to_path_buf()))
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn();
+        if let Err(e) = spawn {
+            log(&format!("wake: could not start the kitten: {e}"));
         }
     }
 
@@ -1118,7 +1154,7 @@ mod win {
         update::updates_itself() && setting("auto_update").map_or(true, |v| v != "0")
     }
 
-    const NO_BUILD_NUMBER: &str = "This is a local build without a build number, so it does not update itself. Build it with tools\\build-local.ps1 to give it one.";
+    const NO_BUILD_NUMBER: &str = "This is a dev build (build 0), so it does not update itself. Build it with tools\\build-local.ps1 to give it a build number.";
 
     /// Checks on a background thread: once now (`repeat` false), or 30 s after start and then
     /// every 6 hours; posts WM_UPDATE_READY once a newer release is downloaded and verified.
