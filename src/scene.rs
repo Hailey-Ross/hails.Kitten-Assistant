@@ -1632,13 +1632,13 @@ impl Scene {
                 }
                 c.fill(&rrect(223.0, 135.0, 31.0, 9.0, 4.5), WHITE.fade(0.92));
                 c.fill(&rrect(222.0, 165.0, 33.0, 5.0, 2.0), CASE);
-                for i in 0..2 {
-                    let ph = (t * 0.75 + i as f32 / 2.0).fract();
-                    let y = if up { 160.0 - 16.0 * ph } else { 146.0 + 16.0 * ph };
-                    let a = (ph * PI).sin();
-                    c.fill(&rrect(234.5, y - 5.0, 8.0, 10.0, 1.6), CODE[i].fade(a));
-                    c.fill(&rrect(236.5, y - 2.0, 4.0, 1.2, 0.6), SCREEN_ON.fade(a));
-                }
+                // one file at a time (two on this short path overlapped), the color changing with each file
+                let run = t * 1.5;
+                let ph = run.fract();
+                let y = if up { 160.0 - 16.0 * ph } else { 146.0 + 16.0 * ph };
+                let a = (ph * PI).sin();
+                c.fill(&rrect(234.5, y - 5.0, 8.0, 10.0, 1.6), CODE[run as usize % 4].fade(a));
+                c.fill(&rrect(236.5, y - 2.0, 4.0, 1.2, 0.6), SCREEN_ON.fade(a));
                 let (ax, ay) = (263.0, 155.0);
                 let d = if up { -1.0 } else { 1.0 };
                 c.stroke(&polyline(&[(ax - 4.0, ay - 2.0 * d), (ax, ay + 2.0 * d), (ax + 4.0, ay - 2.0 * d)]), GREEN, 2.0);

@@ -394,8 +394,19 @@ impl Scene {
             _ => {
                 // a globe turning, its meridians sliding round
                 c.fill(&circle(cx, cy, 19.0), Rgba::rgb(80, 140, 200));
-                c.fill(&oval(cx - 12.0 + 6.0 * (t * 0.7).sin(), cy - 9.0, 13.0, 9.0), Rgba::rgb(110, 190, 120));
-                c.fill(&oval(cx + 2.0 + 6.0 * (t * 0.7).sin(), cy + 3.0, 9.0, 11.0), Rgba::rgb(110, 190, 120));
+                // the land turns one way with the globe: across the front, narrowing toward the rim, round the back
+                // (it used to rock to and fro, the globe spinning backwards half the time)
+                let spin = t * 0.15 * PI;
+                for (lon, dy, w, h) in [(0.0f32, -4.5, 13.0, 9.0), (2.0, 8.5, 9.0, 11.0), (4.0, -1.0, 8.0, 7.0)] {
+                    let a = lon + spin;
+                    let depth = a.cos();
+                    if depth <= 0.05 {
+                        continue;
+                    }
+                    let r = (19.0f32 * 19.0 - dy * dy).sqrt() - w * 0.5 * depth;
+                    let x = cx + r * a.sin();
+                    c.fill(&oval(x - w * 0.5 * depth, cy + dy - h * 0.5, w * depth, h), Rgba::rgb(110, 190, 120).fade(depth.min(1.0)));
+                }
                 for k in 0..3 {
                     let ph = ((t * 0.15 + k as f32 / 3.0).fract() * PI).cos();
                     let w = (19.0 * ph).abs();
@@ -437,13 +448,13 @@ impl Scene {
                 c.stroke(&polyline(&[(cx - 5.0, y + 2.0 * d), (cx, y + 7.0 * d), (cx + 5.0, y + 2.0 * d)]), CODE[3], 3.0);
             }
             3 => {
-                // parcels ride a belt into a folder (or out of it)
+                // parcels ride a belt into the folder for a download, out of it for an upload
                 c.fill(&rrect(250.0, 146.0, 22.0, 18.0, 2.0), SAND);
                 c.fill(&rrect(250.0, 142.0, 10.0, 6.0, 2.0), SAND);
                 c.fill(&rrect(203.0, 164.0, 52.0, 4.0, 2.0), CASE_SHADE);
                 for i in 0..3 {
                     let ph = (t * 0.35 + i as f32 / 3.0).fract();
-                    let u = if up { ph } else { 1.0 - ph };
+                    let u = if up { 1.0 - ph } else { ph };
                     let x = 200.0 + 52.0 * u;
                     let a = (ph * PI).sin().min(0.5) * 2.0;
                     c.fill(&rrect(x, 155.0, 10.0, 9.0, 1.5), Rgba::rgb(206, 150, 90).fade(a));

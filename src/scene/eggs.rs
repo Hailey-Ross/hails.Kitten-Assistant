@@ -362,7 +362,7 @@ impl Scene {
             0 => {
                 // a rosette for the build: "works on my machine"
                 sky(c, Rgba::rgb(36, 54, 66), Rgba::rgb(28, 44, 56));
-                let (rx, ry) = (220.0, 147.0);
+                let (rx, ry) = (217.0, 147.0);
                 let spin = t * 0.5;
                 c.fill(&poly(&[(rx - 7.0, ry + 6.0), (rx - 12.0, ry + 24.0), (rx - 6.0, ry + 20.0), (rx - 2.0, ry + 25.0), (rx, ry + 8.0)]), RED);
                 c.fill(&poly(&[(rx + 7.0, ry + 6.0), (rx + 12.0, ry + 24.0), (rx + 6.0, ry + 20.0), (rx + 2.0, ry + 25.0), (rx, ry + 8.0)]), Rgba::rgb(200, 70, 70));
@@ -374,8 +374,9 @@ impl Scene {
                 c.fill(&circle(rx, ry, 8.5), Rgba::rgb(240, 190, 70));
                 star5(c, rx, ry, 5.5, 0.0, WHITE.fade(0.9));
                 let k = smooth(((t * 0.4).fract() * 4.0).min(1.0));
-                self.label(c, 7.5, 254.0, 145.0, "works on", WHITE.fade(k));
-                self.label(c, 7.5, 254.0, 155.0, "my machine", WHITE.fade(k));
+                // centered right of the rosette, clear of its ruffle (the longer line used to run into it)
+                self.label(c, 7.0, 255.0, 145.0, "works on", WHITE.fade(k));
+                self.label(c, 7.0, 255.0, 155.0, "my machine", WHITE.fade(k));
             }
             1 => {
                 // a digger scoops the dirt and tips it on the pile
@@ -623,7 +624,8 @@ impl Scene {
                     let dir = if up == (i == 0) { 1.0 } else { -1.0 };
                     let x = if dir > 0.0 { 190.0 + 100.0 * ph } else { 290.0 - 100.0 * ph };
                     c.fill(&rrect(x - 7.0, y - 3.5, 14.0, 7.0, 3.5), CODE[i * 2]);
-                    c.fill(&rrect(x - 7.0, y - 3.5, 3.0, 7.0, 1.5), CASE);
+                    // the end cap at the back, whichever way the capsule goes
+                    c.fill(&rrect(x - dir * 5.5 - 1.5, y - 3.5, 3.0, 7.0, 1.5), CASE);
                     for k in 1..4 {
                         c.stroke(&line(x - dir * (8.0 + k as f32 * 4.0), y - 1.5 + k as f32, x - dir * (11.0 + k as f32 * 4.0), y - 1.5 + k as f32), WHITE.fade(0.5 - k as f32 * 0.12), 0.8);
                     }

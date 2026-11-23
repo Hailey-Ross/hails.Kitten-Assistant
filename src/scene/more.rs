@@ -69,9 +69,27 @@ impl Scene {
                 c.stroke(&line(205.0, 125.0, cx + 8.0, fy - 2.0), WHITE.fade(0.6), 0.7);
                 c.fill(&circle(cx + 8.0, fy, 2.6), RED);
                 c.fill(&rrect(cx + 5.4, fy - 0.2, 5.2, 2.8, 1.4), WHITE);
-                let fx = if bite { cx + 6.0 } else { 220.0 + 30.0 * ((g * 0.4).sin() * 0.5 + 0.5) };
+                // the fish swims to the float for the bite and back out after it, always facing the way it swims
+                let fish_x = |g: f32| {
+                    let k = (g * 0.3).fract();
+                    let swim = 235.0 + 15.0 * (g * 0.4).sin();
+                    let hook = cx + 8.0;
+                    if k > 0.7 {
+                        let from = 235.0 + 15.0 * ((g - (k - 0.7) / 0.3) * 0.4).sin();
+                        // (x, facing): it keeps facing the float while it holds on
+                        (from + (hook - from) * smooth(((k - 0.7) / 0.12).min(1.0)), (hook - from).signum())
+                    } else if k < 0.15 {
+                        (hook + (swim - hook) * smooth(k / 0.15), 0.0)
+                    } else {
+                        (swim, 0.0)
+                    }
+                };
+                let (fx, facing) = fish_x(g);
+                let ahead = fish_x(g + 0.05).0 - fx;
+                let d = if facing != 0.0 { facing } else if ahead.abs() > 0.001 { ahead.signum() } else { -1.0 };
                 c.fill(&oval(fx - 6.0, 166.0, 12.0, 6.0), ORANGE.fade(0.8));
-                c.fill(&poly(&[(fx + 5.0, 169.0), (fx + 10.0, 166.0), (fx + 10.0, 172.0)]), ORANGE.fade(0.8));
+                c.fill(&poly(&[(fx - d * 5.0, 169.0), (fx - d * 10.0, 166.0), (fx - d * 10.0, 172.0)]), ORANGE.fade(0.8));
+                c.fill(&circle(fx + d * 3.0, 168.0, 0.8), INK.fade(0.7));
             }
         }
     }
@@ -117,13 +135,17 @@ impl Scene {
                 c.fill(&poly(&[(199.0, 181.0), (199.0, 170.0), (230.0, 164.0), (260.0, 168.0), (277.0, 166.0), (277.0, 181.0)]), Rgba::rgb(50, 90, 70));
             }
             (Some(Mood::Problem), 5) => {
-                // a chain snapped in the middle
-                let a = if (t * 2.0).fract() < 0.5 { 1.0 } else { 0.6 };
-                for (x, off) in [(206.0, 0.0), (218.0, 0.0), (250.0, 2.0), (262.0, 2.0)] {
+                // a chain snapped in the middle: the broken link hangs open on each side, a red snap flashing in the
+                // gap (the old red hooks read as a tick mark)
+                let a = if (t * 2.0).fract() < 0.5 { 1.0 } else { 0.5 };
+                for (x, off) in [(202.0, 0.0), (214.0, 0.0), (252.0, 2.0), (264.0, 2.0)] {
                     c.stroke(&rrect(x, 147.0 + off, 12.0, 7.0, 3.5), CASE, 2.2);
                 }
-                c.stroke(&quad(229.0, 150.0, 232.0, 143.0, 235.0, 148.0), RED.fade(a), 2.2);
-                c.stroke(&quad(245.0, 152.0, 242.0, 159.0, 240.0, 154.0), RED.fade(a), 2.2);
+                c.stroke(&polyline(&[(224.0, 147.0), (229.5, 147.0), (233.0, 150.5), (231.5, 155.0)]), CASE, 2.2);
+                c.stroke(&polyline(&[(256.0, 156.0), (250.5, 156.0), (247.0, 152.5), (248.5, 148.0)]), CASE, 2.2);
+                for (dx, dy) in [(-1.0f32, -1.0f32), (1.0, -0.2), (-0.4, 1.0)] {
+                    c.stroke(&line(240.0 + dx * 2.5, 151.5 + dy * 2.5, 240.0 + dx * 6.0, 151.5 + dy * 6.0), RED.fade(a), 1.6);
+                }
             }
             (Some(Mood::Problem), 6) => {
                 // a crack runs over the glass
@@ -228,7 +250,8 @@ impl Scene {
                 c.fill(&oval(208.0, 160.0, 18.0, 12.0), Rgba::rgb(170, 210, 150));
                 let pts: Vec<(f32, f32)> = (0..=24).map(|i| {
                     let u = i as f32 / 24.0;
-                    (214.0 + 48.0 * u, 140.0 + 22.0 * u + 8.0 * (u * 7.0).sin())
+                    // one full wiggle, so the route ends right on the cross (it used to overshoot below it)
+                    (214.0 + 48.0 * u, 140.0 + 22.0 * u + 8.0 * (u * 2.0 * PI).sin())
                 }).collect();
                 let shown = (((t * 0.2).fract() * 30.0) as usize).min(pts.len());
                 for (i, &(x, y)) in pts.iter().take(shown).enumerate() {
@@ -272,10 +295,11 @@ impl Scene {
                 bar(c, 172.0, (t * 0.12).fract(), GREEN);
             }
             (Some(Mood::Transfer(up)), _) => {
-                // a moving truck drives across with its boxes
+                // a moving truck drives across with its boxes: the cab leads, and the road runs back past it
+                let d = if up { 1.0 } else { -1.0 };
                 c.fill(&rrect(199.0, 170.0, 78.0, 11.0, 0.0), Rgba::rgb(70, 76, 90));
                 for i in 0..4 {
-                    let x = 199.0 + ((i as f32 * 22.0 - t * 30.0).rem_euclid(88.0));
+                    let x = 189.0 + ((i as f32 * 22.0 - d * t * 30.0).rem_euclid(88.0));
                     c.fill(&rrect(x, 175.0, 10.0, 1.5, 0.7), WHITE.fade(0.5));
                 }
                 let x = cx + 3.0 * (t * 2.0).sin();
