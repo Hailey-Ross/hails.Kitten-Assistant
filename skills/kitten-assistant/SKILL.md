@@ -82,7 +82,7 @@ agents work, and one agent's `idle` hides the other's work.
 | You wait on something outside your hands (CI, another machine, a review) | a line starting with `Waiting`, for example `Waiting: CI on main` |
 | You finish and hand back to the user           | `idle` (the kitten cheers for a moment, then naps) |
 | You stop because something failed and the user has to look | a line starting with `Failed`, for example `Failed: release build` |
-| You ask the user a question and wait for the answer | `idle` (the kitten should not look busy while you are waiting on them) |
+| You ask the user a question and wait for the answer (an approval, a choice, missing information) | `Question: <what you need>` (the kitten raises a paw; the line shows ahead of work lines). On a kitten without the Question mood, `idle` |
 
 ### Moods: start every line with the word that fits
 
@@ -112,8 +112,10 @@ Rules for the moods:
 - Never start a line with `--`: the exe takes it as an option and shows a message box on the
   user's screen that waits for a click.
 
-Always end your turn with `idle`, or with the `Failed: ...` line when the turn ends on a
-failure, even when a background build or test of yours is still running. A kitten that keeps
+Always end your turn with `idle`, with the `Failed: ...` line when the turn ends on a
+failure, or with a `Question: ...` line when the turn ends waiting on the user's answer, even when
+a background build or test of yours is still running. A turn that only reports finished work ends
+with `idle`. A kitten that keeps
 typing, building or waiting after you stopped tells the user something false. Your next task's
 first line replaces a failed line.
 
@@ -165,7 +167,9 @@ mark is fine) and replace the file, do not append.
 - **Most useful words first:** `Tests: 3 of 12 suites` beats `Currently running the test suites`.
 - **Plain words the user recognizes:** the task they asked for, the step you are on. No
   internal ids or tool names unless the user uses them too.
-- **Progress when you know it:** `Refactor: file 4 of 9`, `Build 2 of 3 targets`.
+- **Progress when you know it:** `Refactor: file 4 of 9`, `Build 2 of 3 targets`. A recent kitten
+  also draws a bar: keep the text and add `--progress 4/9` (or `45%`); the timer keeps counting
+  because the text did not change.
 - **Change the text for each step:** the bubble timer restarts when the text changes, so each
   step shows its own time. Rewriting the same text keeps the timer running; do that while one
   long step is still going. The same text left over from an earlier job also keeps counting,
@@ -183,6 +187,34 @@ kitten-assistant say "Upgrade: fixing 3 compile errors" --session "api upgrade"
 kitten-assistant say "Upgrade: running test suite" --session "api upgrade"
 kitten-assistant idle --session "api upgrade"
 ```
+
+### Hook commands (a recent kitten)
+
+These print their errors and exit with 1 (never a message box). An older kitten does not know
+them: it opens an "unknown option" message box for the new options (which blocks the call until
+someone clicks), and takes `do`, `wrap` or `sessions` as a status line. Do not probe for them by
+trying one; use them only when the user says their kitten has them (or ask once).
+
+- `say ... --progress 3/10`: a progress bar in the bubble.
+- `say ... --for 10m`: the line clears itself after that time. Good for a watcher's line, so a
+  watcher that dies cannot leave it up.
+- `wrap --session "<name>" --line "Building: release" -- cargo build --release`: the line is up
+  while the program runs, then `idle` on exit code 0 or `Failed: release (exit N)`; it exits
+  with the program's code. In PowerShell add `| Out-Default` so it waits and keeps the output.
+- `status --json`: every busy line with its session, mood, age and progress (the shown one first).
+- `do cheer "Tests pass"`: a cheer with that text. Use it sparingly, for a real milestone;
+  `idle --session "<name>" --cheer "Tests pass"` ends your line with it in one call.
+- `say ... --steps "plan,edit,build,test" --step 2`: a checklist on the screen and "step 2 of 4";
+  later `--step 3` alone keeps the steps.
+- `say "Unit tests: 40 of 120" --mood testing`: the mood without changing the first word.
+- `watch --session "<name> build" --log build.log --tail --background`: a built-in watcher for a
+  long job's log (progress from `3/10` or `45%` in it), in place of a hand-written watcher
+  script. It stops when you send `idle` for its session, or with `--pid N` when that process
+  ends. `wrap --pid N` waits on a running process the same way.
+- `Question:` lines raise the kitten's paw and show ahead of work; `--attention` makes the bubble
+  hop until clicked and `--open URL|PATH` opens something on that click (for example the PR or
+  the plan you want them to look at).
+- Never run `sessions clear`: it ends every other agent's line too.
 
 ## Several assistants or jobs
 

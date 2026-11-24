@@ -123,7 +123,7 @@ impl Scene {
                 self.planning_alt(c, t, look, done);
             }
             None => self.nap_alt(c, t, look),
-            Some(Mood::Busy) => {}
+            Some(Mood::Busy | Mood::Question) => {}
         }
         let _ = cy;
     }

@@ -66,6 +66,7 @@ character that is not a letter, so `Waiting:`, `waiting...` and `WAITING for CI`
 | Busy | anything else | types away, the mug steams; the screen shows scrolling code, progress bars, an equalizer, a spinning gear or a line graph, picked at random each time the line changes (never the same twice in a row) |
 | Waiting | `Waiting`, `Wait` | chin propped on one paw, the other paw drums the desk, bored half-closed eyes that glance at the hourglass on the screen (the sand runs down, then the glass turns over), "..." above its head, slow tail swish; the power light pulses amber |
 | Problem | `Failed`, `Fail`, `Error`, `Problem` | ears droop, a small frown, a blinking red X on a dark red screen, a red power light |
+| Question | `Question`, `Asking`, `Ask`, `Confirm`, `Input` | needs your answer: the right paw goes up beside its head and stays there, bobbing a little, a big question mark pulses on the screen with three waiting dots, and the power light blinks amber. A question shows ahead of work, like a problem |
 | Testing | `Testing`, `Test`, `Tests`, `Playtesting`, `Playtest`, `Checking`, `Check`, `Verifying`, `Verify`, `QA`, `Autotest`, `Regression`, `Smoke` | the game tester: holds a controller (a button lights up with each press) and plays a little platformer, eyes on the screen; for the last 2.2 seconds of every 6.5-second round the game shows a pause sign and the kitten jots three lines on the spiral notepad lying flat on the desk with a pencil, looking down; a blue power light |
 | Building | `Building`, `Build`, `Rebuilding`, `Rebuild`, `Compiling`, `Compile`, `Linking`, `Packaging`, `Bundling` | types in a yellow hard hat while a brick wall goes up course by course on the screen |
 | Researching | `Researching`, `Research`, `Reading`, `Read`, `Reviewing`, `Review`, `Analyzing`, `Analyze`, `Searching`, `Search`, `Investigating`, `Investigate`, `Studying`, `Exploring`, `Digging` | puts on round reading glasses, paws folded on the keyboard, and leans in to the screen, where a page scrolls slowly up and some lines get a yellow highlight as they pass the reading spot; a blue power light |
@@ -118,8 +119,10 @@ full.
 
 Details that matter when you write the file yourself:
 
-- **Only the first line counts.** Anything after the first line break is ignored, so you can
-  keep notes below it.
+- **Only the first line is the text.** The lines after it are read only when they look like
+  `until=...`, `progress=...`, `mood=...`, `open=...`, `attention=1`, `steps=...`, `step=...`
+  or `countdown=1` (see [The file format](#the-file-format)); anything else there is ignored, so
+  you can keep notes below the text.
 - **Spaces at the ends are trimmed.** `  Building  ` shows as `Building`.
 - **Write plain text or UTF-8.** A UTF-8 byte order mark is fine (Windows PowerShell's
   `Set-Content -Encoding utf8` writes one; the kitten skips it). In Windows PowerShell 5.1,
@@ -143,6 +146,18 @@ kitten-assistant                      start the kitten (watches the status file)
 kitten-assistant say "some text"      write "some text" to the status file
 kitten-assistant idle                 write "idle" to the status file
 kitten-assistant status               print the line the kitten shows, then every other busy line
+kitten-assistant status --json        the same as JSON, with each line's session, mood, age and progress
+kitten-assistant sessions             one busy line per row: session, mood, seconds, text (tabs between)
+kitten-assistant sessions clear       end every program's line at once (the kitten naps)
+kitten-assistant do ACTION [TEXT]     make the running kitten act now (sip, refill, stretch, yawn,
+                                      look, wave, cheer); see "Hooking other programs in"
+kitten-assistant wrap -- PROGRAM ...  run PROGRAM with a line up, then idle or a Failed line;
+                                      exits with PROGRAM's exit code
+kitten-assistant wrap --pid N         the same for a process that is already running
+kitten-assistant watch --log FILE     keep a line current from a job's log file
+kitten-assistant timer TIME [TEXT]    a countdown in the bubble and a cheer at the end
+kitten-assistant timer stop           end the timer early
+kitten-assistant history              what ran today and for how long (history on|off)
 kitten-assistant quit                 close the running kitten
 kitten-assistant snapshot out.png     render one frame to a PNG, no window
 kitten-assistant update               check for a newer release now and install it
@@ -170,8 +185,8 @@ kitten-assistant help                 show the command summary (in a message box
   inside quotes and even after `say`. `kitten-assistant "--check-assets hang"` or
   `kitten-assistant say Building --release` (unquoted) is an unknown option: the status is not
   written, and a message box with the error opens and keeps the call waiting until someone
-  clicks OK, so a script that waits on it hangs. There is no `--` end-of-options marker either.
-  Put a word in front (`kitten-assistant "Check: --check-assets hang"`), quote the whole line,
+  clicks OK, so a script that waits on it hangs. A bare `--` only ends the options for `wrap`
+  (everything after it is the program to run). Put a word in front (`kitten-assistant "Check: --check-assets hang"`), quote the whole line,
   or write the status file directly.
 
 - **Updates install themselves.** Every kitten with a build number (a numbered release, the
@@ -195,7 +210,9 @@ kitten-assistant help                 show the command summary (in a message box
 - `quit` closes the running kitten wherever it is. It does nothing if none is running.
 - Only one kitten runs at a time. Starting a second one does nothing, so it is safe to put
   `kitten-assistant` at the top of every script.
-- The exe is a windowed app, so apart from `status` it prints nothing to the terminal: `help`, `version` and errors
+- `status`, `sessions`, `do` and `wrap` are made for other programs: they print to the terminal, and their errors
+  are printed too (starting with `kitten-assistant:`) with exit code 1, never a message box.
+- The exe is a windowed app, so apart from those it prints nothing to the terminal: `help`, `version` and errors
   (for example a status folder that does not exist) show a message box, and the call does not
   return until it is closed. Errors are also written to `%TEMP%\kitten-assistant.log`, except
   a mistyped or unknown option (see above), which only shows the message box.
@@ -209,7 +226,24 @@ kitten-assistant help                 show the command summary (in a message box
 | Option          | Used by        | Meaning                                                         |
 |-----------------|----------------|-----------------------------------------------------------------|
 | `--status FILE` | run, say, idle | the status file (see [section 5](#5-choosing-a-status-file))    |
-| `--session NAME`| say, idle      | this program's own status line (see [section 5](#5-choosing-a-status-file)); also `KITTEN_SESSION` |
+| `--session NAME`| say, idle, wrap | this program's own status line (see [section 5](#5-choosing-a-status-file)); also `KITTEN_SESSION`; `wrap` defaults to `wrap PROGRAM` |
+| `--for TIME`    | say            | the line clears itself after TIME: `90` (seconds), `30s`, `5m`, `1h`, `1h30m` |
+| `--progress P`  | say, snapshot  | a progress bar in the bubble, and P after the timer: `3/10`, `45%` or `0.45` |
+| `--line TEXT`   | wrap           | the line while the program runs (default `Running: PROGRAM ARGS`); its first word picks the mood |
+| `--json`        | status, history | print JSON instead of text (see [Hooking other programs in](#hooking-other-programs-in)) |
+| `--mood NAME`   | say, wrap, watch, timer | the mood whatever the first word says: `typing`, `waiting`, `problem`, `question`, `testing`, `building`, `researching`, `downloading`, `uploading`, `thinking` (or any mood word) |
+| `--open TARGET` | say, wrap, watch | a click on the bubble opens it: a web page (`https://...`), a folder, or a log / text file in its app; any other file is only shown in Explorer, never run |
+| `--attention`   | say            | the bubble hops until it is clicked |
+| `--steps A,B,C` | say            | a checklist on the screen and "step N of M" in the bubble |
+| `--step N`      | say            | the current step, 1 for the first; without `--steps` the line keeps the steps it has |
+| `--cheer TEXT`  | idle           | end the line with a cheer showing TEXT |
+| `--log FILE`    | watch          | the log to follow |
+| `--match TEXT`  | watch          | only log lines containing TEXT count |
+| `--tail`        | watch          | show the newest (matching) log line after the line's text |
+| `--pid N`       | wrap, watch    | wait for process N to end: idle on exit code 0, else a Failed line |
+| `--background`  | watch          | keep watching as a background process and return at once |
+| `--days N`      | history        | the last N days instead of today |
+| `--listen ADDR` | run            | serve the local endpoint on ADDR, for example `127.0.0.1:47613` (also `listen=` in the ini) |
 | `--scale N`     | run, snapshot  | size multiplier; default: right-click > Size, else the screen's DPI (snapshot: 2) |
 | `--monitor N`   | run            | start on display N (the number in Windows' Display settings) and save it as the default |
 | `--x N --y N`   | run            | window position in screen pixels; default bottom-right of the default display, above its taskbar |
@@ -353,18 +387,196 @@ kitten-assistant idle | Out-Null
 
 If you want the timer to show the whole job instead, keep the same text for the whole job.
 
+For a bar, keep the text and send `--progress` each time; the timer keeps counting because the
+text did not change:
+
+```powershell
+foreach ($i in 1..$files.Count) {
+    kitten-assistant say "Copying: photos" --session photos --progress "$i/$($files.Count)" | Out-Null
+    # ... copy one ...
+}
+kitten-assistant idle --session photos | Out-Null
+```
+
+### Lines that end on their own
+
+`--for TIME` gives a line an end time: `kitten-assistant say "Waiting: deploy to settle" --for 5m`.
+After that the kitten drops it as if `idle` had been sent. Handy for notices from programs that
+might never come back to say `idle`.
+
+### Hooking other programs in
+
+**Wrap a command.** `wrap` puts a line up, runs the program in your terminal (its output and
+input stay there), then sends `idle` when it exits with 0 (the kitten cheers) or leaves a
+`Failed` line otherwise, and exits with the program's own exit code:
+
+```powershell
+kitten-assistant wrap --line "Building: release" -- cargo build --release | Out-Default
+```
+
+```bash
+kitten-assistant wrap --line "Testing: unit tests" -- npm test && echo passed
+```
+
+The failed line names what failed: `Failed: release (exit 101)`, or `(canceled)` when you
+stopped it with Ctrl+C. In PowerShell add `| Out-Default` so it waits for the program and keeps
+its output on the screen (`| Out-Null` would hide it); `$LASTEXITCODE` holds the exit code.
+
+**Make the kitten act.** `do` reaches the running kitten straight away:
+
+| Action        | What the kitten does |
+|---------------|----------------------|
+| `sip`         | a sip of coffee |
+| `refill`      | finds the mug empty, puts the kettle on, pours, sips |
+| `stretch`, `yawn` | a stretch, a yawn |
+| `look`        | looks around |
+| `wave [TEXT]` | the hello wave, with TEXT in the bubble (default: the usual hello) |
+| `cheer [TEXT]`| a cheer with a green tick, TEXT on the screen and in the bubble (default `yay!`) |
+
+`kitten-assistant do cheer "Deployed to prod!"`. `wave` and `cheer` work any time; the others only
+while the kitten is working (a napping kitten sleeps through them). With no kitten running,
+`do` prints an error and exits with 1.
+
+**Read what is going on.** `status --json` gives every busy line, the shown one first:
+
+```json
+{"idle":false,"lines":[
+  {"session":"backup","text":"Copying: photos","mood":"downloading","age_secs":42,
+   "progress":0.300,"progress_label":"3/10","expires_in_secs":null,"shown":true}]}
+```
+
+`session` is `null` for the plain status file; `mood` is one of `typing`, `waiting`, `problem`,
+`testing`, `building`, `researching`, `downloading`, `uploading`, `thinking`. `sessions` prints
+the same lines as tab-separated rows (session, mood, seconds, text), easy to read in a shell;
+`sessions clear` ends them all.
+
+**The file format.** Programs that write the status file directly can add the same things on the
+lines after the text, one `key=value` per line. Older kittens read only the first line, so the
+extra lines never confuse them:
+
+```
+Copying: photos
+until=1795482140
+progress=3/10
+```
+
+`until` is the end time in Unix seconds; `progress` takes the same forms as `--progress`. The
+other keys match the options: `mood=testing`, `open=https://...`, `attention=1`,
+`steps=fetch,build,test`, `step=2`, and `countdown=1` (a timer's line: the bubble counts down to
+`until`).
+
+### Questions and things that need you
+
+Start a line with `Question` (or `Asking`, `Ask`, `Confirm`, `Input`) when a job is waiting for
+someone's answer: the kitten raises a paw and shows a question mark, and the line shows ahead of
+work lines, like a problem. Add `--attention` to make the bubble hop until someone clicks it, and
+`--open` to make that click open something useful:
+
+```
+kitten-assistant say "Question: deploy to production?" --attention --open https://ci.example.com/run/812
+```
+
+A click on the bubble stops the hop (for that line; a new line hops again) and opens the link,
+folder or file. Web pages open in the browser, folders in Explorer, and `.log`, `.txt`, `.md`,
+`.json`, `.csv`, `.xml`, `.yaml`, `.ini`, `.html`, `.png` and `.pdf` files in their own app. Any
+other file is shown selected in Explorer and never run. `--open` works on any line, not only
+questions.
+
+### Steps and time left
+
+`--steps` puts a checklist on the screen (done steps ticked, the current one with an arrow) and
+"step N of M" in the bubble. Move along with `--step` alone; the line keeps its steps:
+
+```
+kitten-assistant say "Deploying: site" --session deploy --steps "fetch,build,test,upload" --step 1
+kitten-assistant say "Deploying: site" --session deploy --step 2
+```
+
+With `--progress`, the kitten also works out the time left from how fast the progress moves, and
+after about 10 seconds the bubble adds "about 4 min left".
+
+`--mood` picks the mood when the first word should read naturally:
+`kitten-assistant say "Unit tests: 40 of 120" --mood testing`.
+
+### Watching a log
+
+`watch` keeps a line current from a job that writes a log, with no script of your own:
+
+```
+kitten-assistant watch --log build.log --match Compiling --tail --line "Building: game" --background
+```
+
+Every 2 seconds it reads what the log added (UTF-8, or UTF-16 as Windows PowerShell's `>`
+writes), takes the progress from the newest matching line's first `3/10` or `45%`, and with
+`--tail` shows that log line after the text. Each write lasts a minute, so if the watcher dies
+its line goes away on its own. It stops on Ctrl+C, when someone sends `idle` for its session
+(`kitten-assistant idle --session "watch build"`; the session is `watch` plus the log's name
+unless you give `--session`), or with `--pid N` when that process ends (idle on exit code 0, a
+Failed line otherwise). `--background` starts it as its own hidden process and returns at once.
+
+`wrap --pid N` waits for a process that is already running in the same way, without a log:
+`kitten-assistant wrap --pid 4120 --line "Rendering: final cut"`.
+
+### Ending with a cheer
+
+`kitten-assistant idle --session deploy --cheer "Deployed!"` ends the line and cheers with your
+words (a green tick on the screen, the words in the bubble). Without a running kitten it just
+ends the line.
+
+### Timers
+
+`kitten-assistant timer 25m Focus` puts up a line that counts down ("24:59 left", with a bar that
+runs down), and when it runs out the kitten cheers "Focus: time's up!". `timer stop` ends it early
+without a cheer. The timer uses the session `timer` (another with `--session`) and the waiting
+mood (another with `--mood`).
+
+### History
+
+Off by default. Turn it on with right-click > **Keep a history** or `kitten-assistant history on`.
+The kitten then writes every line that ends (its start, end, session, mood and text) to
+`history.tsv` next to the status file and keeps 30 days. `kitten-assistant history` prints
+today's lines with their times and lengths, `--days 7` the last week, `--json` the rows as JSON,
+and right-click > **What ran today** opens today's in Notepad. Lines can hold anything a program
+wrote, so the file stays on your computer and is never sent anywhere.
+
+### The local endpoint
+
+For programs that cannot start the exe or share a file (a browser extension, a container, WSL,
+another computer), the kitten can answer HTTP. It is off by default: add `listen=127.0.0.1:47613`
+to `kitten-assistant.ini` (or start the kitten with `--listen 127.0.0.1:47613`) and restart it.
+On its first start it makes a token in `listen-token.txt` next to the exe; every call must send
+it as `Authorization: Bearer <token>`.
+
+| Call | Fields | Does |
+|------|--------|------|
+| `GET /status` | | the `status --json` document |
+| `POST /say` | `text`, and any of `session`, `progress`, `for`, `mood`, `open`, `attention`, `steps`, `step` | `say` |
+| `POST /idle` | `session`, `cheer` | `idle` |
+| `POST /do` | `action`, `text` | `do` |
+
+Fields go in the query string or a form body:
+
+```bash
+curl -X POST http://127.0.0.1:47613/say -H "Authorization: Bearer $TOKEN" \
+     -d session=ext -d "text=Uploading: photos" -d progress=3/10
+```
+
+Answers are JSON (`{"ok":true}`, or `{"ok":false,"error":"..."}` with 400, 401, 404 or 405). There
+are no CORS headers, so a web page cannot call it from a browser. `127.0.0.1` only answers this
+computer; to let another computer in, listen on its network address and keep the token secret
+(anyone with it can change the kitten's lines).
+
+### Sounds
+
+Off by default. Right-click > **Sounds** (or `sound=1` in the ini) plays a Windows sound when a
+problem or a question becomes the line the kitten shows.
+
 ## 7. Recipes
 
 ### A wrapper for any command
 
-Save as `kitten-run.ps1`, then run `kitten-run "Building" cargo build --release`:
-
-```powershell
-param([string]$Label, [Parameter(ValueFromRemainingArguments)]$Cmd)
-kitten-assistant say $Label | Out-Null
-$exe, $rest = $Cmd
-try { & $exe @rest } finally { kitten-assistant idle | Out-Null }
-```
+Use `wrap` (see [Hooking other programs in](#hooking-other-programs-in)):
+`kitten-assistant wrap --line "Building" -- cargo build --release`.
 
 ### Scheduled tasks
 
@@ -381,11 +593,9 @@ changing.
 
 ### Several jobs at once
 
-There is one kitten and one line. Two simple ways to share it:
-
-- Let the longest job own the kitten and leave the others out.
-- Write a combined line, for example `Build 2/4, tests running`, from one place that knows
-  about all jobs.
+Give each job its own `--session NAME` (see
+[Several programs at once](#several-programs-at-once-sessions)); the kitten shows the one that
+matters most and counts the rest.
 
 ### Builds in an editor
 
@@ -473,6 +683,9 @@ all the defaults.
 | `coat`          | **Color**                      | the color's name, for example `Gray tabby`               |
 | `coat_seed`     | **Color**                      | where the patches sit on patched coats                   |
 | `always_on_top` | **Always on top**              | `1` (default) or `0`                                     |
+| `sound`         | **Sounds**                     | `1` or `0` (default)                                     |
+| `history`       | **Keep a history**             | `1` or `0` (default)                                     |
+| `listen`        | (none)                         | an address such as `127.0.0.1:47613` for the local endpoint; empty or missing = off |
 | `auto_update`   | you, by hand                   | `0` turns off automatic updates (default on)             |
 
 ## 10. Snapshots

@@ -251,6 +251,8 @@ pub enum Mood {
     /// `Thinking...` / `Planning...`: draws boxes and arrows on a whiteboard beside the desk, a checklist on the
     /// screen
     Thinking,
+    /// `Question...` / `Asking...`: needs the user's answer; a paw goes up and a question mark pulses on the screen
+    Question,
 }
 
 impl Mood {
@@ -270,7 +272,33 @@ impl Mood {
             "uploading" | "upload" | "pushing" | "push" | "deploying" | "deploy" | "publishing" | "publish"
             | "backing" | "backup" => Mood::Transfer(true),
             "thinking" | "think" | "planning" | "plan" | "designing" | "design" | "brainstorming" | "pondering" => Mood::Thinking,
+            "question" | "asking" | "ask" | "confirm" | "input" => Mood::Question,
             _ => Mood::Busy,
+        }
+    }
+
+    /// A mood by name (`--mood`, `mood=`): the names `status --json` prints, or any first word the moods know.
+    pub fn named(s: &str) -> Option<Mood> {
+        let w = s.trim().to_lowercase();
+        match w.as_str() {
+            "typing" | "busy" | "writing" => Some(Mood::Busy),
+            _ => Some(Mood::of(&w)).filter(|m| *m != Mood::Busy),
+        }
+    }
+
+    /// The mood's name for scripts (`status --json`, `sessions`).
+    pub fn name(self) -> &'static str {
+        match self {
+            Mood::Busy => "typing",
+            Mood::Waiting => "waiting",
+            Mood::Problem => "problem",
+            Mood::Testing => "testing",
+            Mood::Building => "building",
+            Mood::Researching => "researching",
+            Mood::Transfer(false) => "downloading",
+            Mood::Transfer(true) => "uploading",
+            Mood::Thinking => "thinking",
+            Mood::Question => "question",
         }
     }
 
@@ -532,7 +560,7 @@ fn pad_point(t: f32, x: f32, y: f32) -> (f32, f32) {
 const SCREENS: usize = 5;
 /// How many screens each other mood (and the nap) has; a new status line picks one at random (screens.rs, more.rs).
 pub const LOOKS: usize = 8;
-const LOOK_SLOTS: usize = 9;
+pub const LOOK_SLOTS: usize = 10;
 
 fn look_slot(mood: Option<Mood>) -> usize {
     match mood {
@@ -545,6 +573,7 @@ fn look_slot(mood: Option<Mood>) -> usize {
         Some(Mood::Transfer(_)) => 6,
         Some(Mood::Thinking) => 7,
         None => 8,
+        Some(Mood::Question) => 9,
     }
 }
 
@@ -711,8 +740,24 @@ pub struct Scene {
     pub since: f64,
     /// time the last job finished (busy -> idle), for the "all done!" moment
     pub done_at: f64,
-    /// when a manual update check last found the kitten up to date
+    /// when a manual update check last found the kitten up to date (or `do cheer` cheered)
     pub up_to_date_at: f64,
+    /// `do cheer TEXT`: the words of that cheer (None: the update check's "up to date")
+    cheer_text: Option<String>,
+    /// how far along the shown line is (`say --progress`): 0..1 and its label
+    pub progress: Option<(f32, String)>,
+    /// about how many seconds the shown line has left, from how fast its progress moves
+    pub eta: Option<f64>,
+    /// the shown line's checklist (`--steps`, `--step`): the names and the current one (0-based)
+    pub steps: Option<(Vec<String>, usize)>,
+    /// the shown line wants the user (`--attention`, not clicked yet): the bubble hops
+    pub attention: bool,
+    /// a click on the bubble does something (it hops, or opens a link): a hand over it
+    pub clickable: bool,
+    /// a timer's line (`countdown=1`): the scene time it runs out at, so the bubble counts down
+    pub countdown_end: Option<f64>,
+    /// where the bubble drew last frame (x, y, w, h), for clicks
+    bubble_rect: std::cell::Cell<Option<[f32; 4]>>,
     /// the hello wave: when it started, how long it lasts (infinite for a looping greeting card) and the bubble's
     /// text with an optional smaller second line (None: a plain hello)
     greet_at: f64,
@@ -770,6 +815,14 @@ impl Scene {
             since: 0.0,
             done_at: -100.0,
             up_to_date_at: -100.0,
+            cheer_text: None,
+            progress: None,
+            eta: None,
+            steps: None,
+            attention: false,
+            clickable: false,
+            countdown_end: None,
+            bubble_rect: std::cell::Cell::new(None),
             greet_at: -100.0,
             greet_secs: GREET_SECS,
             greet_text: None,
@@ -854,17 +907,23 @@ impl Scene {
 
     /// Like `set_status`, but new busy text counts as already `age` seconds old.
     pub fn set_status_aged(&mut self, s: &str, t: f64, age: f64) {
+        self.set_status_mood(s, t, age, None);
+    }
+
+    /// Like `set_status_aged`, with the mood picked by `mood` (`--mood`) instead of the first word when given.
+    pub fn set_status_mood(&mut self, s: &str, t: f64, age: f64, mood: Option<Mood>) {
         let s = s.trim();
         let busy = !s.is_empty() && !s.eq_ignore_ascii_case("idle");
         let new_line = busy && (!self.busy || s != self.task);
-        self.brain.want(busy.then(|| Mood::of(s)), new_line, age);
+        let mood_of = |s: &str| mood.unwrap_or_else(|| Mood::of(s));
+        self.brain.want(busy.then(|| mood_of(s)), new_line, age);
         if new_line {
             self.since = t - age.max(0.0);
             // a new screen for the new line, never the same one twice in a row
             let pick = (self.rand() * (SCREENS - 1) as f64) as usize;
             self.screen = (self.screen + 1 + pick) % SCREENS;
             self.egg = self.rand() < 0.1;
-            self.roll_look(Some(Mood::of(s)));
+            self.roll_look(Some(mood_of(s)));
         }
         if self.busy && !busy {
             self.roll_look(None);
@@ -891,6 +950,11 @@ impl Scene {
     /// Point (scene units) on the clickable "+N more" (or the rotating line).
     pub fn more_hit(&self, x: f32, y: f32) -> bool {
         self.busy && self.more_rect.get().is_some_and(|[rx, ry, w, h]| x >= rx && x <= rx + w && y >= ry && y <= ry + h)
+    }
+
+    /// Point (scene units) on the bubble while a click on it does something (`clickable`).
+    pub fn bubble_hit(&self, x: f32, y: f32) -> bool {
+        self.busy && self.clickable && self.bubble_rect.get().is_some_and(|[rx, ry, w, h]| x >= rx && x <= rx + w && y >= ry && y <= ry + h)
     }
 
     /// "+N more" clicked: start going through the other lines, or stop.
@@ -924,6 +988,21 @@ impl Scene {
     /// the mood.
     pub fn show_up_to_date(&mut self, t: f64) {
         self.up_to_date_at = t;
+        self.cheer_text = None;
+    }
+
+    /// `do cheer [TEXT]`: the same cheer with a tick, whatever the mood, and TEXT (or "yay!") on the screen and in the
+    /// bubble.
+    pub fn cheer_now(&mut self, t: f64, text: Option<&str>) {
+        self.up_to_date_at = t;
+        self.cheer_text = Some(text.map(str::trim).filter(|s| !s.is_empty()).unwrap_or("yay!").to_string());
+    }
+
+    /// `do wave [TEXT]`: the hello wave, with TEXT in the bubble (or the usual hello).
+    pub fn wave(&mut self, t: f64, text: Option<&str>) {
+        self.greet_at = t;
+        self.greet_secs = GREET_SECS;
+        self.greet_text = text.map(str::trim).filter(|s| !s.is_empty()).map(|s| (s.to_string(), None));
     }
 
     /// The hello wave the kitten gives when it starts: a paw up beside the head, a "hi!" in the bubble.
@@ -1125,6 +1204,12 @@ impl Scene {
             let wave = 3.0 * (tf * 2.0 * PI * 1.6).sin();
             l = Paw { x: CX - 50.0, lift: CHEER_LIFT + wave, key: None, down: false };
             r = Paw { x: CX + 30.0, lift: CHEER_LIFT - wave, key: None, down: false };
+        }
+        // a question: the right paw goes up beside the head and stays there, bobbing a little, until it is answered
+        if busy && self.mood == Mood::Question && free && up.is_none() {
+            let bob = (tf * 2.0 * PI * 0.8).sin();
+            l = Paw { x: CX - 29.0, lift: 0.0, key: None, down: false };
+            r = Paw { x: CX + 52.0, lift: 75.0 + 2.5 * bob, key: None, down: false };
         }
         // the hello wave: a gentle bob, the left paw on the keys, the right one up beside the head waving side to
         // side twice a second (every motion repeats within GREET_LOOP)
@@ -2084,6 +2169,7 @@ impl Scene {
             Some(Mood::Waiting | Mood::Thinking) => Rgba::rgb(255, 186, 84).fade(breathe(4.0)),
             Some(Mood::Problem) => RED.fade(if (t * 2.0).fract() < 0.5 { 1.0 } else { 0.3 }),
             Some(Mood::Testing | Mood::Researching) => CODE[1].fade(breathe(3.0)),
+            Some(Mood::Question) => Rgba::rgb(255, 186, 84).fade(if (t * 1.5).fract() < 0.5 { 1.0 } else { 0.35 }),
             None if p.cheer.is_some() || p.greet.is_some() => GREEN,
             None => Rgba::rgb(255, 186, 84).fade(breathe(1.5)),
         };
@@ -2102,8 +2188,19 @@ impl Scene {
         c.clip(Some(&screen));
         let look = self.looks[look_slot(mood)];
         let cheering = mood.is_none() && p.cheer.is_some();
-        let other = mood != Some(Mood::Busy) && !cheering && p.up_to_date.is_none() && p.greet.is_none();
-        if other && self.egg {
+        let other = !matches!(mood, Some(Mood::Busy | Mood::Question)) && !cheering && p.up_to_date.is_none() && p.greet.is_none();
+        if let (Some(_), Some((steps, at))) = (mood, self.steps.as_ref()) {
+            self.steps_screen(c, t, steps, *at);
+        } else if mood == Some(Mood::Question) {
+            // a big question mark that pulses, with three dots waiting for the answer
+            let beat = (t * 1.2).fract();
+            let size = 34.0 * (1.0 + if beat < 0.25 { 0.12 * (beat / 0.25 * PI).sin() } else { 0.0 });
+            self.label(c, size, 238.0, 151.0 + size * 0.36, "?", SAND);
+            for i in 0..3 {
+                let on = ((t * 2.0) as i64).rem_euclid(4) > i as i64;
+                c.fill(&circle(230.0 + i as f32 * 8.0, 173.0, 1.8), SAND.fade(if on { 0.9 } else { 0.25 }));
+            }
+        } else if other && self.egg {
             self.mood_egg(c, t, mood, self.egg_pick);
         } else if other && look > 0 {
             self.alt_screen(c, t, mood, look, p);
@@ -2170,9 +2267,12 @@ impl Scene {
             }
             c.stroke(&polyline(&pts), GREEN, 5.0 + 0.6 * (k * 18.0).sin().max(0.0) * drawn);
             if let Some(font) = self.bold.as_ref().filter(|_| k > 0.3) {
-                let text = "up to date";
-                let w = measure(font, 11.0, text);
-                c.text(font, 11.0, 238.0 - w / 2.0, 172.0, text, GREEN.fade(((k - 0.3) / 0.15).min(1.0)));
+                let text = self.cheer_text.as_deref().unwrap_or("up to date");
+                // a longer cheer shrinks to fit the glass, and past that is cut
+                let size = (11.0 * 70.0 / measure(font, 11.0, text).max(1.0)).clamp(7.0, 11.0);
+                let text = wrap(font, size, text, 72.0, 1).into_iter().next().unwrap_or_default();
+                let w = measure(font, size, &text);
+                c.text(font, size, 238.0 - w / 2.0, 172.0, &text, GREEN.fade(((k - 0.3) / 0.15).min(1.0)));
             }
         } else if mood.is_none() && p.cheer.is_some() {
             // a big green tick
@@ -2671,13 +2771,25 @@ impl Scene {
                 Some((text, sub)) => (text.clone(), sub.clone()),
                 None => ("hi! nice to see you".to_string(), None),
             }
+        } else if let (Some(_), Some(text)) = (p.up_to_date, self.cheer_text.as_ref()) {
+            // `do cheer`: its words take the bubble for the moment, busy or not
+            (text.clone(), None)
         } else if self.busy {
             let m = ((t - self.since) / 60.0).max(0.0) as i64;
             let (start, so_far) = if self.mood == Mood::Waiting { ("just started", "waiting") } else { ("just started", "so far") };
-            let sub = match m {
-                0 => start.to_string(),
-                1..=59 => format!("{m} min {so_far}"),
-                _ => format!("{} h {} min {so_far}", m / 60, m % 60),
+            let sub = match (self.countdown_end, m) {
+                // a timer counts down, to the second
+                (Some(end), _) => {
+                    let left = (end - t).max(0.0).ceil() as i64;
+                    if left >= 3600 {
+                        format!("{}:{:02}:{:02} left", left / 3600, left / 60 % 60, left % 60)
+                    } else {
+                        format!("{}:{:02} left", left / 60, left % 60)
+                    }
+                }
+                (None, 0) => start.to_string(),
+                (None, 1..=59) => format!("{m} min {so_far}"),
+                (None, _) => format!("{} h {} min {so_far}", m / 60, m % 60),
             };
             match self.rotating(t) {
                 // "+N more" clicked: the other programs' lines, one after another
@@ -2685,22 +2797,61 @@ impl Scene {
                     let who = if name.is_empty() { String::new() } else { format!("{name} \u{b7} ") };
                     (text.to_owned(), Some(format!("{who}{} of {} more", i + 1, self.other_lines.len())))
                 }
-                None if self.others > 0 => (self.task.clone(), Some(format!("{sub} \u{b7} +{} more", self.others))),
-                None => (self.task.clone(), Some(sub)),
+                None => {
+                    let mut sub = sub;
+                    if let Some((names, at)) = &self.steps {
+                        sub = format!("{sub} \u{b7} step {} of {}", at + 1, names.len());
+                    }
+                    if let Some((_, label)) = &self.progress {
+                        sub = format!("{sub} \u{b7} {label}");
+                    }
+                    if let Some(left) = self.eta {
+                        sub = format!("{sub} \u{b7} {}", eta_words(left));
+                    }
+                    if self.others > 0 {
+                        (self.task.clone(), Some(format!("{sub} \u{b7} +{} more", self.others)))
+                    } else {
+                        (self.task.clone(), Some(sub))
+                    }
+                }
             }
         } else if p.cheer.is_some() {
             (if p.up_to_date.is_some() { "up to date!" } else { "all done!" }.to_string(), None)
         } else {
             ("napping... no jobs right now".to_string(), None)
         };
+        let bar = self.progress.as_ref().map(|p| p.0).or(self.countdown_end.map(|_| -1.0)).filter(|_| {
+            self.busy && p.greet.is_none() && self.rotating(t).is_none() && !(p.up_to_date.is_some() && self.cheer_text.is_some())
+        });
         let (ms, ss) = (12.5, 10.5);
         let lines = wrap(bold, ms, &main, 214.0, 3);
         let (lh, top, pad) = (15.5, 8.0, 7.0);
+        // a long sub line is cut with an ellipsis rather than run out of the bubble (its "+N more" end stays)
+        let sub = sub.map(|s| {
+            if measure(regular, ss, &s) <= 216.0 {
+                return s;
+            }
+            match s.rfind(" \u{b7} +") {
+                Some(at) => {
+                    let tail = &s[at..];
+                    let head = wrap(regular, ss, &s[..at], 216.0 - measure(regular, ss, tail), 1).into_iter().next().unwrap_or_default();
+                    format!("{head}{tail}")
+                }
+                None => wrap(regular, ss, &s, 216.0, 1).into_iter().next().unwrap_or_default(),
+            }
+        });
         let tw = lines.iter().map(|l| measure(bold, ms, l)).fold(0.0, f32::max);
         let sw = sub.as_ref().map(|s| measure(regular, ss, s)).unwrap_or(0.0);
         let bw = (tw.max(sw) + 24.0).clamp(96.0, 240.0);
-        let bh = top + lines.len() as f32 * lh + if sub.is_some() { 13.0 } else { 0.0 } + pad;
-        let bottom = f32::max(68.0, bh + 2.0);
+        let bh = top + lines.len() as f32 * lh + if sub.is_some() { 13.0 } else { 0.0 } + if bar.is_some() { 8.0 } else { 0.0 } + pad;
+        // wanting the user: two quick hops, then a rest
+        let hop = if self.attention && self.busy {
+            let k = (t % 1.6) as f32;
+            if k < 0.6 { 6.0 * (k / 0.3 * PI).sin().abs() } else { 0.0 }
+        } else {
+            0.0
+        };
+        let bottom = f32::max(68.0, bh + 2.0) - hop;
         let by = bottom - bh;
         let bx = (CX - bw * 0.32).clamp(4.0, W - 4.0 - bw);
         let awake = self.busy || p.cheer.is_some() || p.greet.is_some();
@@ -2709,7 +2860,8 @@ impl Scene {
         let body = rrect(bx, by, bw, bh, 11.0);
         c.fill(&body, fill);
         c.stroke(&body, INK, 1.8);
-        let tip = (CX - 8.0, 82.0);
+        let tip = (CX - 8.0, 82.0 - hop * 0.5);
+        self.bubble_rect.set(Some([bx, by, bw, bh]));
         c.fill(&poly(&[(CX - 13.0, bottom - 1.6), tip, (CX + 2.0, bottom - 1.6)]), fill);
         c.stroke(&line(CX - 13.0, bottom, tip.0, tip.1), INK, 1.8);
         c.stroke(&line(tip.0, tip.1, CX + 2.0, bottom), INK, 1.8);
@@ -2719,6 +2871,17 @@ impl Scene {
             c.text(bold, ms, bx + 12.0, by + top + 12.0 + i as f32 * lh, l, col);
         }
         self.more_rect.set(None);
+        if let Some(f) = bar {
+            // the progress bar, under the text
+            let (x, w) = (bx + 12.0, bw - 24.0);
+            let y = by + bh - pad - 4.0;
+            c.fill(&rrect(x, y, w, 4.0, 2.0), SUB.fade(0.25));
+            // a timer's bar runs down instead (f < 0 marks it; its length is the time left of the line's whole span)
+            let f = if f < 0.0 { self.countdown_end.map_or(0.0, |end| ((end - t) / (end - self.since).max(1.0)).clamp(0.0, 1.0) as f32) } else { f };
+            if f > 0.0 {
+                c.fill(&rrect(x, y, (w * f).max(4.0), 4.0, 2.0), GREEN);
+            }
+        }
         if let Some(s) = sub {
             let base = by + top + lines.len() as f32 * lh + 10.5;
             c.text(regular, ss, bx + 12.0, base, &s, SUB);
@@ -2730,6 +2893,40 @@ impl Scene {
                 };
                 self.more_rect.set(Some([x - 3.0, base - 11.0, w + 6.0, 15.0]));
             }
+        }
+    }
+}
+
+/// "about 3 min left" for a time-left estimate in seconds.
+pub fn eta_words(secs: f64) -> String {
+    let m = (secs / 60.0).round() as i64;
+    match m {
+        0 => "under a minute left".to_string(),
+        1..=59 => format!("about {m} min left"),
+        _ => format!("about {} h {} min left", m / 60, m % 60),
+    }
+}
+
+impl Scene {
+    /// The shown line's checklist on the screen: done steps ticked, the current one with a moving arrow, the rest
+    /// waiting; at most five rows, scrolled so the current one shows.
+    fn steps_screen(&self, c: &mut Canvas, t: f32, steps: &[String], at: usize) {
+        let Some(font) = self.bold.as_ref() else { return };
+        let rows = 5usize;
+        let first = at.saturating_sub(2).min(steps.len().saturating_sub(rows));
+        for (i, name) in steps.iter().enumerate().skip(first).take(rows) {
+            let y = 133.0 + (i - first) as f32 * 10.5;
+            let (col, x) = (if i == at { WHITE } else if i < at { GREEN.fade(0.85) } else { SAND.fade(0.55) }, 214.0);
+            if i < at {
+                c.stroke(&polyline(&[(204.0, y - 3.0), (206.5, y - 0.5), (211.0, y - 6.0)]), GREEN, 1.6);
+            } else if i == at {
+                let nudge = 1.5 * (t * 2.0 * PI).sin().max(0.0);
+                c.fill(&poly(&[(203.0 + nudge, y - 7.0), (209.0 + nudge, y - 3.5), (203.0 + nudge, y)]), SAND);
+            } else {
+                c.stroke(&rrect(204.0, y - 6.5, 6.0, 6.0, 1.5), SAND.fade(0.5), 1.0);
+            }
+            let text = wrap(font, 7.5, name, 58.0, 1).into_iter().next().unwrap_or_default();
+            c.text(font, 7.5, x, y, &text, col);
         }
     }
 }

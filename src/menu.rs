@@ -14,6 +14,9 @@ use crate::scene;
 pub enum Action {
     Corner,
     Topmost,
+    Sound,
+    History,
+    Today,
     CheckUpdate,
     Quit,
     SizeAuto,
@@ -37,6 +40,9 @@ enum Icon {
     Color,
     Size,
     Pin,
+    Bell,
+    Clock,
+    List,
     Update,
     Quit,
     None,
@@ -64,6 +70,9 @@ pub struct Info {
     pub default_size: (String, bool),
     pub sizes: Vec<(String, bool)>,
     pub topmost: bool,
+    /// right-click > Sounds and Keep a history are on
+    pub sound: bool,
+    pub history: bool,
 }
 
 fn version_text() -> String {
@@ -210,6 +219,9 @@ impl Menu {
                 Row { go: Some(Page::Color), ..row("Color", Icon::Color) },
                 Row { go: Some(Page::Size), ..row("Size", Icon::Size) },
                 Row { act: Some(Action::Topmost), check: Some(self.info.topmost), ..row("Always on top", Icon::Pin) },
+                Row { act: Some(Action::Sound), check: Some(self.info.sound), ..row("Sounds", Icon::Bell) },
+                Row { act: Some(Action::History), check: Some(self.info.history), gap: true, ..row("Keep a history", Icon::Clock) },
+                Row { act: Some(Action::Today), ..row("What ran today", Icon::List) },
                 Row { act: Some(Action::CheckUpdate), gap: true, ..row("Check for Update", Icon::Update) },
                 row(&version_text(), Icon::None),
                 Row { act: Some(Action::Quit), ..row("Quit", Icon::Quit) },
@@ -649,6 +661,32 @@ fn icon(c: &mut Canvas, icon: Icon, x: f32, y: f32, hot: bool, t: f32) {
             let (dx, dy) = (-a.sin(), a.cos());
             let (nx, ny) = (a.cos(), a.sin());
             c.fill(&poly(&[(tx + 3.2 * dx, ty + 3.2 * dy), (tx + 2.6 * nx, ty + 2.6 * ny), (tx - 2.6 * nx, ty - 2.6 * ny)]), col);
+        }
+        Icon::Bell => {
+            // a little bell that swings while hovered
+            let a = wig * 0.12;
+            let (s, k) = a.sin_cos();
+            let p = |px: f32, py: f32| (x + px * k - py * s, y - 6.0 + px * s + py * k);
+            let body: Vec<(f32, f32)> = [(-5.5, 9.5), (-4.5, 4.0), (-3.5, 1.5), (0.0, 0.0), (3.5, 1.5), (4.5, 4.0), (5.5, 9.5)]
+                .iter()
+                .map(|&(px, py)| p(px, py))
+                .collect();
+            c.fill(&poly(&body), col);
+            let clap = p(0.0, 11.5);
+            c.fill(&circle(clap.0, clap.1, 1.6), col);
+        }
+        Icon::Clock => {
+            c.stroke(&circle(x, y, 6.5), col, 1.6);
+            let a = -PI / 2.0 + wig * 0.4;
+            c.stroke(&line(x, y, x + 4.0 * a.cos(), y + 4.0 * a.sin()), col, 1.6);
+            c.stroke(&line(x, y, x + 3.0, y + 1.5), col, 1.6);
+        }
+        Icon::List => {
+            for i in 0..3 {
+                let yy = y - 4.5 + i as f32 * 4.5;
+                c.fill(&circle(x - 5.0, yy, 1.2), col);
+                c.stroke(&line(x - 2.0, yy, x + 6.0 + if i == 1 { wig } else { 0.0 }, yy), col, 1.6);
+            }
         }
         Icon::Quit => {
             c.stroke(&line(x - 4.5 - wig * 0.2, y - 4.5, x + 4.5 + wig * 0.2, y + 4.5), Rgba::rgb(196, 80, 80), 1.9);

@@ -63,6 +63,31 @@ kitten-assistant status
 kitten-assistant quit
 ```
 
+For other programs to hook into:
+
+```
+kitten-assistant say "Copying: photos" --progress 3/10        a progress bar in the bubble
+kitten-assistant say "Waiting: deploy" --for 5m               a line that clears itself
+kitten-assistant wrap --line "Building" -- cargo build        line up while it runs, then idle or Failed
+kitten-assistant do cheer "Deployed!"                         sip, refill, stretch, yawn, look, wave, cheer
+kitten-assistant status --json                                every busy line, with mood, age and progress
+kitten-assistant sessions                                     the same as tab-separated rows; `sessions clear`
+kitten-assistant say "Question: deploy?" --attention --open URL   the bubble hops; a click opens URL
+kitten-assistant say "Deploying" --steps "build,test,upload" --step 2   a checklist on the screen
+kitten-assistant say "Unit tests: 40 of 120" --mood testing  the mood without the first word
+kitten-assistant idle --cheer "Deployed!"                     end with a cheer in your words
+kitten-assistant watch --log build.log --tail --background    keep a line current from a log
+kitten-assistant wrap --pid 4120                              wait for a running process
+kitten-assistant timer 25m Focus                              a countdown, then a cheer
+kitten-assistant history                                      what ran today (history on|off)
+```
+
+With `--progress`, the bubble also estimates the time left. An optional local HTTP endpoint (off
+by default, token required) lets browser extensions, containers or other computers do the same.
+
+These print their errors and exit with 1 instead of opening a message box. The full guide is in
+[docs/USAGE.md](docs/USAGE.md#hooking-other-programs-in).
+
 - `say` writes your line to the status file; text that isn't a command works the same without `say`. A status that is exactly one command word (`quit`, `update`, `version`, `help`, `snapshot`, `status`) runs that command instead, so use `say` for those.
 - `idle` sends the kitten back to its nap. Always end a job with it, or the kitten keeps typing.
 - `status` prints the line the kitten is showing right now, or `idle` while it naps. In PowerShell, pipe it on (`kitten-assistant status | Write-Output`, or `$line = kitten-assistant status | Out-String`): a plain `$line = kitten-assistant status` gets nothing.
@@ -107,6 +132,7 @@ The first word of the status line picks how the kitten acts (any case; the word 
 | Busy | anything else | types away while the mug steams; the screen shows scrolling code, progress bars, an equalizer, a spinning gear or a line graph, picked at random each time the line changes |
 | Waiting | `Waiting`, `Wait` | chin on one paw, the other paw drums the desk, a bored glance at the hourglass on the screen, "..." above its head; the bubble counts "N min waiting" |
 | Problem | `Failed`, `Fail`, `Error`, `Problem` | ears droop, a small frown, a blinking red X on the screen |
+| Question | `Question`, `Asking`, `Ask`, `Confirm`, `Input` | a paw goes up and a question mark pulses on the screen; shows ahead of work, like a problem |
 | Testing | `Testing`, `Test`, `Tests`, `Playtesting`, `Playtest`, `Checking`, `Check`, `Verifying`, `Verify`, `QA`, `Autotest`, `Regression`, `Smoke` | turns game tester: plays a little platformer with a controller, then pauses now and then to jot notes on a notepad |
 | Building | `Building`, `Build`, `Rebuilding`, `Rebuild`, `Compiling`, `Compile`, `Linking`, `Packaging`, `Bundling` | types in a yellow hard hat while a brick wall goes up on the screen |
 | Researching | `Researching`, `Research`, `Reading`, `Read`, `Reviewing`, `Review`, `Analyzing`, `Analyze`, `Searching`, `Search`, `Investigating`, `Investigate`, `Studying`, `Exploring`, `Digging` | puts its reading glasses on and leans in to a page scrolling on the screen, the line it's reading lit up |
@@ -143,6 +169,9 @@ Drag the kitten anywhere with the left mouse button; it remembers the spot and o
 | **Color** | a page of portraits, the kitten in each of its 32 coats (tabbies, solids, a tuxedo, pointed, calico and tortoiseshell, and fun ones up to galaxy and rainbow), so you can see a coat before you pick it. Patched coats get new patches each time you pick them |
 | **Size** | a page from 50% to 300%; the kitten resizes at once. **Default** goes back to following your display scaling |
 | **Always on top** | checked keeps the kitten above other windows; unchecked lets them cover it |
+| **Sounds** | checked plays a Windows sound when a problem or a question becomes the line the kitten shows (off by default) |
+| **Keep a history** | checked keeps a list of every line and how long it ran in `history.tsv` next to the status file, for 30 days (off by default) |
+| **What ran today** | opens today's history in Notepad |
 | **Check for Update** | checks for a newer release now; if there is one, the kitten downloads it, checks it and restarts on it, otherwise it cheers with "up to date" and a green tick on its screen |
 | **Quit** | closes the kitten |
 

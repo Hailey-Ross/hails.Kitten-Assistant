@@ -83,7 +83,7 @@ impl Scene {
             Some(Mood::Transfer(up)) => self.egg_transfer(c, t, pick, up),
             Some(Mood::Thinking) => self.egg_thinking(c, t, pick),
             None => self.egg_nap(c, t, pick),
-            Some(Mood::Busy) => {}
+            Some(Mood::Busy | Mood::Question) => {}
         }
     }
 

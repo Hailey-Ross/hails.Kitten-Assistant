@@ -8,10 +8,13 @@
 
 mod brain;
 mod canvas;
+mod history;
+mod listen;
 mod menu;
 mod scene;
 mod sessions;
 mod update;
+mod watch;
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -23,6 +26,17 @@ kitten-assistant                      run the kitten (watches the status file)
 kitten-assistant say \"some text\"      kitten types, bubble shows the text (starts the kitten if none runs)
 kitten-assistant idle                 kitten naps
 kitten-assistant status               print the line the kitten shows, then every other busy program's line
+kitten-assistant status --json        the same as JSON: every busy line with its session, mood, age, progress
+kitten-assistant sessions             one busy line per row: session, mood, seconds, text (tab separated)
+kitten-assistant sessions clear       every program's line goes away (the kitten naps)
+kitten-assistant do ACTION [TEXT]     the running kitten acts now: sip, refill, stretch, yawn, look (while it works),
+                                      wave [TEXT], cheer [TEXT] (any time; TEXT in the bubble)
+kitten-assistant wrap -- PROGRAM ARGS run PROGRAM with a line up (--line TEXT, default \"Running: PROGRAM ARGS\"),
+                                      then idle on success or a Failed line; exits with PROGRAM's exit code
+kitten-assistant wrap --pid N         the same for a process that is already running
+kitten-assistant watch --log FILE     keep a line current from a job's log (progress from \"3/10\" or \"45%\")
+kitten-assistant timer TIME [TEXT]    a countdown in the bubble and a cheer at the end (timer stop ends it)
+kitten-assistant history              what ran today and for how long (history on|off; --days N, --json)
 kitten-assistant quit                close a running kitten
 kitten-assistant snapshot out.png     render one frame to a PNG
 kitten-assistant update               check for a newer stable release now and install it
@@ -35,6 +49,25 @@ options:
   --scale N        size multiplier (default: right-click > Size, else the screen DPI)
   --monitor N      start on display N and make it the default (right-click > Monitor does the same)
   --x N --y N      window position (default: bottom-right of the default display)
+say options:
+  --for TIME       the line clears itself after TIME (90, 30s, 5m, 1h30m)
+  --progress P     a progress bar in the bubble: 3/10, 45% or 0.45 (say it again with the same text to move it)
+  --steps A,B,C    a checklist on the screen; --step N marks step N (1-based; --step alone keeps the steps)
+  --mood NAME      the mood whatever the first word says (typing, waiting, problem, question, testing, building,
+                   researching, downloading, uploading, thinking)
+  --open URL|PATH  a click on the bubble opens it (a web page, a folder, a log)
+  --attention      the bubble hops until it is clicked
+idle options:
+  --cheer TEXT     cheer with TEXT as the line ends
+watch options:
+  --log FILE       the log to follow; --match TEXT only lines with TEXT; --tail shows the newest log line too
+  --pid N          stop when process N ends (idle on exit code 0, else a Failed line)
+  --background     keep watching in the background and return at once (idle --session NAME stops it)
+run options:
+  --listen ADDR    serve the local endpoint (e.g. 127.0.0.1:47613; token in listen-token.txt)
+wrap options:
+  --line TEXT      the line while PROGRAM runs (its first word picks the mood, as with say)
+  --session NAME   default: \"wrap PROGRAM\"
 snapshot options:
   --busy TEXT      render the busy pose with TEXT (default: napping)
   --time SECONDS   animation time to render (default 3.2)
@@ -75,6 +108,30 @@ struct Opts {
     greet: Option<String>,
     frames: Option<u32>,
     fps: Option<f64>,
+    /// `say --for`: seconds until the line clears itself
+    for_secs: Option<f64>,
+    progress: Option<sessions::Progress>,
+    /// `wrap --line`
+    line: Option<String>,
+    json: bool,
+    /// snapshot: the words of a `--event cheer@P` / `wave@P`
+    text: Option<String>,
+    /// everything after `--` (wrap's program and its arguments), untouched
+    rest: Vec<String>,
+    mood: Option<scene::Mood>,
+    open: Option<String>,
+    attention: bool,
+    steps: Option<Vec<String>>,
+    step: Option<usize>,
+    /// `idle --cheer`
+    cheer: Option<String>,
+    log_file: Option<PathBuf>,
+    matching: Option<String>,
+    tail: bool,
+    pid: Option<u32>,
+    background: bool,
+    listen: Option<String>,
+    days: Option<u32>,
 }
 
 fn parse() -> Result<Opts, String> {
@@ -109,6 +166,28 @@ fn parse() -> Result<Opts, String> {
             "--frames" => o.frames = Some(val()?.parse().map_err(|_| "bad --frames")?),
             "--fps" => o.fps = Some(val()?.parse().ok().filter(|f: &f64| *f > 0.0).ok_or("bad --fps")?),
             "--screen" => o.screen = Some(val()?.parse().map_err(|_| "bad --screen")?),
+            "--for" => o.for_secs = Some(sessions::parse_duration(&val()?).ok_or("bad --for (try 90, 30s, 5m or 1h30m)")?),
+            "--progress" => o.progress = Some(sessions::Progress::parse(&val()?).ok_or("bad --progress (try 3/10, 45% or 0.45)")?),
+            "--line" => o.line = Some(val()?),
+            "--json" => o.json = true,
+            "--text" => o.text = Some(val()?),
+            "--mood" => o.mood = Some(scene::Mood::named(&val()?).ok_or("bad --mood (try question, testing, building, waiting...)")?),
+            "--open" => o.open = Some(val()?),
+            "--attention" => o.attention = true,
+            "--steps" => o.steps = Some(sessions::parse_steps(&val()?)).filter(|s| !s.is_empty()),
+            "--step" => o.step = Some(val()?.parse().ok().filter(|s| *s >= 1).ok_or("bad --step (1 is the first)")?),
+            "--cheer" => o.cheer = Some(val()?),
+            "--log" => o.log_file = Some(PathBuf::from(val()?)),
+            "--match" => o.matching = Some(val()?),
+            "--tail" => o.tail = true,
+            "--pid" => o.pid = Some(val()?.parse().map_err(|_| "bad --pid")?),
+            "--background" => o.background = true,
+            "--listen" => o.listen = Some(val()?),
+            "--days" => o.days = Some(val()?.parse().map_err(|_| "bad --days")?),
+            "--" => {
+                o.rest = it.by_ref().collect();
+                break;
+            }
             "-h" | "--help" | "help" => return Err(USAGE.into()),
             _ if a.starts_with("--") => return Err(format!("unknown option {a}\n\n{USAGE}")),
             _ => positional.push(a),
@@ -140,11 +219,137 @@ fn status_path(o: &Opts) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("status.txt"))
 }
 
+/// A status file's whole content (its text, then any `key=value` lines; see `sessions::split`); empty when missing.
 fn read_status(p: &Path) -> String {
-    std::fs::read_to_string(p)
-        .ok()
-        .and_then(|s| s.trim_start_matches('\u{feff}').lines().next().map(|l| l.trim().to_string()))
-        .unwrap_or_default()
+    std::fs::read_to_string(p).unwrap_or_default()
+}
+
+/// The busy lines, the shown one first.
+fn busy_lines(status: &Path) -> Vec<sessions::Line> {
+    let lines = sessions::read_all(status, read_status, status_age, sessions::now());
+    let Some(top) = sessions::pick(&lines).map(|(l, _)| l.clone()) else { return lines };
+    std::iter::once(top.clone()).chain(lines.into_iter().filter(|l| *l != top)).collect()
+}
+
+/// What goes on the lines after a status line's text (see `sessions::Meta`), as the options gave it.
+#[derive(Clone, Default)]
+pub struct LineOpts {
+    pub for_secs: Option<f64>,
+    pub progress: Option<sessions::Progress>,
+    pub mood: Option<scene::Mood>,
+    pub open: Option<String>,
+    pub attention: bool,
+    pub steps: Option<Vec<String>>,
+    pub step: Option<usize>,
+    pub countdown: bool,
+}
+
+impl LineOpts {
+    fn from(o: &Opts) -> LineOpts {
+        LineOpts {
+            for_secs: o.for_secs,
+            progress: o.progress.clone(),
+            mood: o.mood,
+            open: o.open.clone(),
+            attention: o.attention,
+            steps: o.steps.clone(),
+            step: o.step,
+            countdown: false,
+        }
+    }
+}
+
+/// Writes a line (the session's own file, or the plain status file): the text and its options. `--step` without
+/// `--steps` keeps the steps the line already has. `idle` or nothing is written as it is.
+pub fn say_line(status: &Path, session: Option<&str>, text: &str, opts: &LineOpts) -> Result<(), String> {
+    let file = match session {
+        Some(name) => sessions::file(status, name),
+        None => status.to_path_buf(),
+    };
+    let body = if text.trim().is_empty() || text.trim().eq_ignore_ascii_case("idle") {
+        text.to_string()
+    } else {
+        let steps = match (&opts.steps, opts.step) {
+            (Some(s), _) => s.clone(),
+            (None, Some(_)) => sessions::split(&read_status(&file)).1.steps,
+            (None, None) => Vec::new(),
+        };
+        sessions::Meta {
+            until: opts.for_secs.map(|s| sessions::now() + s),
+            progress: opts.progress.clone(),
+            mood: opts.mood,
+            open: opts.open.clone(),
+            attention: opts.attention,
+            steps,
+            step: opts.step,
+            countdown: opts.countdown,
+        }
+        .body(text)
+    };
+    match session {
+        Some(name) => sessions::say(status, name, &body),
+        None => std::fs::write(status, &body).map_err(|e| e.to_string()),
+    }
+}
+
+/// `s` as a JSON string, quotes included.
+fn json_str(s: &str) -> String {
+    let mut o = String::with_capacity(s.len() + 2);
+    o.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => o.push_str("\\\""),
+            '\\' => o.push_str("\\\\"),
+            '\n' => o.push_str("\\n"),
+            '\r' => o.push_str("\\r"),
+            '\t' => o.push_str("\\t"),
+            c if (c as u32) < 0x20 => o.push_str(&format!("\\u{:04x}", c as u32)),
+            c => o.push(c),
+        }
+    }
+    o.push('"');
+    o
+}
+
+/// `status --json`: `{"idle":false,"lines":[{"session":..,"text":..,"mood":..,"age_secs":..,"progress":..,
+/// "progress_label":..,"expires_in_secs":..,"shown":true},..]}`, the shown line first.
+fn status_json(lines: &[sessions::Line], now: f64) -> String {
+    let rows: Vec<String> = lines
+        .iter()
+        .enumerate()
+        .map(|(i, l)| {
+            let (p, label) = match &l.meta.progress {
+                Some(p) => (format!("{:.3}", p.frac), json_str(&p.label)),
+                None => ("null".into(), "null".into()),
+            };
+            let left = l.meta.until.map_or("null".into(), |u| format!("{:.0}", (u - now).max(0.0)));
+            format!(
+                "{{\"session\":{},\"text\":{},\"mood\":\"{}\",\"age_secs\":{:.0},\"progress\":{p},\"progress_label\":{label},\"expires_in_secs\":{left},\"shown\":{}}}",
+                if l.name.is_empty() { "null".into() } else { json_str(&l.name) },
+                json_str(&l.text),
+                l.mood().name(),
+                l.age,
+                i == 0
+            )
+        })
+        .collect();
+    format!("{{\"idle\":{},\"lines\":[{}]}}", lines.is_empty(), rows.join(","))
+}
+
+/// `do`: the actions a running kitten takes from another program, and their numbers in the message.
+const ACTIONS: [&str; 7] = ["sip", "refill", "stretch", "yawn", "look", "wave", "cheer"];
+
+/// `wrap`: the line it leaves when the program failed with `code` (None: stopped with Ctrl+C or killed).
+fn wrap_failed(line: &str, code: Option<i32>) -> String {
+    // the line's own mood word goes; "Failed" takes its place
+    let what = match line.split_once(':') {
+        Some((w, rest)) if !rest.trim().is_empty() && scene::Mood::of(w) != scene::Mood::Busy => rest.trim(),
+        _ => line.trim(),
+    };
+    match code {
+        Some(c) => format!("Failed: {what} (exit {c})"),
+        None => format!("Failed: {what} (canceled)"),
+    }
 }
 
 /// Seconds since the status file was last written; 0 if unknown.
@@ -169,8 +374,16 @@ fn log(msg: &str) {
 
 fn main() {
     std::panic::set_hook(Box::new(|info| log(&format!("panic: {info}"))));
+    // commands other programs hook into never show a message box (it would block a script until someone clicks):
+    // they print the error and exit with 1
+    let hook = std::env::args().skip(1).take_while(|a| a != "--").any(|a| matches!(a.as_str(), "do" | "wrap" | "sessions" | "watch" | "timer" | "history" | "--json"));
     let o = match parse() {
         Ok(o) => o,
+        Err(e) if hook => {
+            log(&e);
+            win::print(&format!("kitten-assistant: {e}"));
+            std::process::exit(1);
+        }
         Err(e) => {
             win::message(&e);
             return;
@@ -179,10 +392,7 @@ fn main() {
     let status = status_path(&o);
     let session = o.session.clone().or_else(|| std::env::var("KITTEN_SESSION").ok()).as_deref().and_then(sessions::clean);
     let write = |text: &str| {
-        let r = match &session {
-            Some(name) => sessions::say(&status, name, text),
-            None => std::fs::write(&status, text).map_err(|e| e.to_string()),
-        };
+        let r = say_line(&status, session.as_deref(), text, &LineOpts::from(&o));
         if r.is_ok() && !text.trim().is_empty() && !text.trim().eq_ignore_ascii_case("idle") {
             win::wake(&status);
         }
@@ -191,23 +401,164 @@ fn main() {
     let result = match o.cmd.as_str() {
         "run" => win::run(&o, status.clone()),
         "say" => write(&o.arg.clone().unwrap_or_default()),
-        "idle" => match &session {
-            Some(name) => sessions::idle(&status, name),
-            None => std::fs::write(&status, "idle").map_err(|e| e.to_string()),
-        },
+        "idle" => {
+            let r = match &session {
+                Some(name) => sessions::idle(&status, name),
+                None => std::fs::write(&status, "idle").map_err(|e| e.to_string()),
+            };
+            // --cheer: the end of the job gets its own words (nothing to cheer when no kitten runs)
+            if let (Ok(()), Some(text)) = (&r, o.cheer.as_deref()) {
+                let _ = win::act(ACTIONS.len() - 1, text);
+            }
+            r
+        }
         // the line the kitten shows, then every other busy program's line; `idle` when nothing is busy
         "status" => {
-            let lines = sessions::read_all(&status, read_status, status_age);
-            let text = match sessions::pick(&lines) {
-                None => "idle".to_string(),
-                Some((top, _)) => std::iter::once(top)
-                    .chain(lines.iter().filter(|l| *l != top))
+            let lines = busy_lines(&status);
+            let text = if o.json {
+                status_json(&lines, sessions::now())
+            } else if lines.is_empty() {
+                "idle".to_string()
+            } else {
+                lines
+                    .iter()
                     .map(|l| if l.name.is_empty() { l.text.clone() } else { format!("[{}] {}", l.name, l.text) })
                     .collect::<Vec<_>>()
-                    .join("\n"),
+                    .join("\n")
             };
             win::print(&text);
             Ok(())
+        }
+        // one busy line per row for scripts: session, mood, seconds, text (tabs between); `sessions clear` ends them all
+        "sessions" => match o.arg.as_deref() {
+            None => {
+                let rows: Vec<String> = busy_lines(&status)
+                    .iter()
+                    .map(|l| format!("{}\t{}\t{:.0}\t{}", l.who(), l.mood().name(), l.age, l.text))
+                    .collect();
+                if !rows.is_empty() {
+                    win::print(&rows.join("\n"));
+                }
+                Ok(())
+            }
+            Some("clear") => sessions::clear_all(&status).map(|n| win::print(&format!("cleared {n} session line(s)"))),
+            Some(other) => Err(format!("sessions: unknown `{other}` (try `sessions` or `sessions clear`)")),
+        },
+        "do" => {
+            let arg = o.arg.clone().unwrap_or_default();
+            let (action, text) = arg.split_once(' ').map_or((arg.as_str(), ""), |(a, t)| (a, t.trim()));
+            let action = action.to_ascii_lowercase();
+            match ACTIONS.iter().position(|a| *a == action) {
+                Some(i) => win::act(i, text),
+                None => Err(format!("do: unknown action `{action}` (one of {})", ACTIONS.join(", "))),
+            }
+        }
+        "wrap" if o.pid.is_some() && o.rest.is_empty() => {
+            let pid = o.pid.unwrap_or(0);
+            let name = session.clone().unwrap_or_else(|| format!("wrap pid {pid}"));
+            let line = o.line.clone().unwrap_or_else(|| format!("Running: process {pid}"));
+            match win::watch(&status, &name, &line, None, &LineOpts::from(&o), Some(pid)) {
+                Ok(code) => std::process::exit(code),
+                Err(e) => Err(e),
+            }
+        }
+        "watch" => {
+            if o.log_file.is_none() && o.pid.is_none() {
+                Err("watch: give --log FILE and/or --pid N".to_string())
+            } else {
+                let stem = o.log_file.as_deref().and_then(|p| p.file_stem()).map(|s| s.to_string_lossy().into_owned());
+                let name = session
+                    .clone()
+                    .or_else(|| sessions::clean(&format!("watch {}", stem.clone().unwrap_or_else(|| o.pid.unwrap_or(0).to_string()))))
+                    .unwrap_or_else(|| "watch".into());
+                let line = o.line.clone().unwrap_or_else(|| match (&stem, o.pid) {
+                    (Some(s), _) => format!("Watching: {s}"),
+                    (None, pid) => format!("Running: process {}", pid.unwrap_or(0)),
+                });
+                if o.background {
+                    win::detach(&name)
+                } else {
+                    let log = o.log_file.clone().map(|p| (p, o.matching.clone(), o.tail));
+                    match win::watch(&status, &name, &line, log, &LineOpts::from(&o), o.pid) {
+                        Ok(code) => std::process::exit(code),
+                        Err(e) => Err(e),
+                    }
+                }
+            }
+        }
+        // `timer 25m Focus`: a countdown line, and a cheer when it runs out; `timer stop` ends it early
+        "timer" => {
+            let name = session.clone().unwrap_or_else(|| "timer".into());
+            let arg = o.arg.clone().unwrap_or_default();
+            let (first, text) = arg.split_once(' ').map_or((arg.as_str(), ""), |(a, b)| (a, b.trim()));
+            if first.eq_ignore_ascii_case("stop") {
+                sessions::idle(&status, &name)
+            } else {
+                match sessions::parse_duration(first) {
+                    None => Err("timer: give a time first, e.g. kitten-assistant timer 25m Focus".to_string()),
+                    Some(secs) => {
+                        let mut opts = LineOpts::from(&o);
+                        opts.for_secs = Some(secs);
+                        opts.countdown = true;
+                        opts.mood = opts.mood.or(Some(scene::Mood::Waiting));
+                        let text = if text.is_empty() { "Timer" } else { text };
+                        let r = say_line(&status, Some(&name), text, &opts);
+                        if r.is_ok() {
+                            win::wake(&status);
+                        }
+                        r
+                    }
+                }
+            }
+        }
+        // what ran today (or the last --days N days), or turn the history on or off
+        "history" => match o.arg.as_deref() {
+            Some(v @ ("on" | "off")) => {
+                win::save_setting("history", if v == "on" { "1" } else { "0" });
+                win::print(&format!("history is {v} (the running kitten picks it up within 2 seconds)"));
+                Ok(())
+            }
+            Some(other) => Err(format!("history: unknown `{other}` (try history, history on, history off)")),
+            None => {
+                let rows = history::read(&history::path(&status));
+                let from = history::local_midnight(sessions::now(), o.days.unwrap_or(1).saturating_sub(1));
+                let text = if o.json {
+                    let items: Vec<String> = rows
+                        .iter()
+                        .filter(|r| r.end >= from)
+                        .map(|r| {
+                            format!(
+                                "{{\"start\":{:.0},\"end\":{:.0},\"session\":{},\"mood\":{},\"text\":{}}}",
+                                r.start,
+                                r.end,
+                                if r.session.is_empty() { "null".into() } else { json_str(&r.session) },
+                                json_str(&r.mood),
+                                json_str(&r.text)
+                            )
+                        })
+                        .collect();
+                    format!("[{}]", items.join(","))
+                } else if win::setting("history").as_deref() != Some("1") && rows.is_empty() {
+                    "the history is off: turn it on with `kitten-assistant history on` or right-click > Keep a history".into()
+                } else {
+                    history::summary(&rows, from)
+                };
+                win::print(&text);
+                Ok(())
+            }
+        },
+        "wrap" => {
+            if o.rest.is_empty() {
+                Err("wrap: give the program after --, e.g. kitten-assistant wrap -- cargo build".to_string())
+            } else {
+                let program = Path::new(&o.rest[0]).file_stem().map_or(o.rest[0].clone(), |s| s.to_string_lossy().into_owned());
+                let name = session.clone().unwrap_or_else(|| sessions::clean(&format!("wrap {program}")).unwrap_or_else(|| "wrap".into()));
+                let line = o.line.clone().unwrap_or_else(|| format!("Running: {}", o.rest.join(" ")));
+                match win::wrap(&status, &name, &line, &o.rest, &LineOpts::from(&o)) {
+                    Ok(code) => std::process::exit(code),
+                    Err(e) => Err(e),
+                }
+            }
         }
         "quit" => {
             win::quit();
@@ -232,6 +583,10 @@ fn main() {
     };
     if let Err(e) = result {
         log(&e);
+        if hook {
+            win::print(&format!("kitten-assistant: {e}"));
+            std::process::exit(1);
+        }
         win::message(&e);
     }
 }
@@ -246,6 +601,8 @@ fn menu_snapshot(o: &Opts, page: &str, out: &str, sc: f32) -> Result<(), String>
         default_size: ("Default (125%)".into(), true),
         sizes: [50, 75, 100, 125, 150, 175, 200, 250, 300].iter().map(|p| (format!("{p}%"), false)).collect(),
         topmost: true,
+        sound: false,
+        history: true,
     };
     let mut m = menu::Menu::new(info, sc).ok_or("menu")?;
     let opens = match page {
@@ -318,8 +675,31 @@ fn snapshot(o: &Opts) -> Result<(), String> {
         };
         s.greet_forever(0.0, text, sub);
     }
+    // --progress: the bar in the bubble; --steps/--step: the checklist; --attention: the hop; --mood: the mood;
+    // --for: a timer's countdown
+    s.progress = o.progress.as_ref().map(|p| (p.frac, p.label.clone()));
+    if let Some(steps) = o.steps.clone() {
+        let at = o.step.unwrap_or(1).clamp(1, steps.len()) - 1;
+        s.steps = Some((steps, at));
+    }
+    s.attention = o.attention;
+    if o.mood.is_some() {
+        s.set_status_mood(o.busy.as_deref().unwrap_or("idle"), 0.0, 0.0, o.mood);
+    }
+    if let Some(f) = o.for_secs {
+        s.countdown_end = Some(t_end + f);
+    }
+    // --event cheer@P / wave@P (with --text): that moment of `do cheer` / `do wave` (not in the usage text)
+    if let Some((name @ ("cheer" | "wave"), p)) = o.event.as_deref().and_then(|e| e.split_once('@')) {
+        let p: f64 = p.parse().map_err(|_| "bad --event")?;
+        if name == "cheer" {
+            s.cheer_now(t_end - p * 3.0, o.text.as_deref());
+        } else {
+            s.wave(t_end - p * 3.5, o.text.as_deref());
+        }
+    }
     // --event NAME@P: that moment of a rare event (stretch, yawn, look; not in the usage text)
-    if let Some((name, p)) = o.event.as_deref().and_then(|e| e.split_once('@')) {
+    if let Some((name, p)) = o.event.as_deref().and_then(|e| e.split_once('@')).filter(|(n, _)| !matches!(*n, "cheer" | "wave")) {
         let e = match name {
             "stretch" => brain::Event::Stretch,
             "yawn" => brain::Event::Yawn,
@@ -336,7 +716,7 @@ fn snapshot(o: &Opts) -> Result<(), String> {
         s.set_status("idle", (t_end - 1.0).max(0.0));
     }
     // the other moods and the nap show their screen N too (0 = their first one)
-    s.looks = [o.screen.unwrap_or(0) % scene::LOOKS; 9];
+    s.looks = [o.screen.unwrap_or(0) % scene::LOOKS; scene::LOOK_SLOTS];
     s.egg = o.egg;
     // --eggpick N: which of a mood's extras (not in the usage text)
     s.egg_pick = o.egg_pick.unwrap_or(0);
@@ -481,16 +861,7 @@ mod win {
             return;
         }
         let Ok(exe) = std::env::current_exe() else { return };
-        // the caller's pipes must not leak into the kitten, or `say ... | Out-Null` waits until the kitten quits
-        use windows_sys::Win32::System::Console::{GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE};
-        for which in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
-            unsafe {
-                let h = GetStdHandle(which);
-                if !h.is_null() && h != INVALID_HANDLE_VALUE {
-                    SetHandleInformation(h, HANDLE_FLAG_INHERIT, 0);
-                }
-            }
-        }
+        keep_pipes();
         use std::process::Stdio;
         let spawn = std::process::Command::new(&exe)
             .arg("--status")
@@ -501,6 +872,229 @@ mod win {
             .spawn();
         if let Err(e) = spawn {
             log(&format!("wake: could not start the kitten: {e}"));
+        }
+    }
+
+    /// `do`: hand action `i` (of ACTIONS) and its text to the running kitten. An error when none runs.
+    pub fn act(i: usize, text: &str) -> Result<(), String> {
+        use windows_sys::Win32::System::DataExchange::COPYDATASTRUCT;
+        let c = wide(CLASS);
+        let h = unsafe { FindWindowW(c.as_ptr(), null()) };
+        if h.is_null() {
+            return Err("no kitten is running (start it, or `say` something first)".into());
+        }
+        let cd = COPYDATASTRUCT { dwData: i, cbData: text.len() as u32, lpData: text.as_ptr() as *mut c_void };
+        let mut answer = 0usize;
+        let sent = unsafe {
+            SendMessageTimeoutW(h, WM_COPYDATA, 0, &cd as *const _ as LPARAM, SMTO_ABORTIFHUNG, 2000, &mut answer)
+        };
+        match (sent, answer) {
+            (0, _) => Err("the kitten did not answer in time".into()),
+            (_, 0) => Err("this kitten is too old for `do`: update it (kitten-assistant update)".into()),
+            _ => Ok(()),
+        }
+    }
+
+    /// `wrap`: `line` up on session `name` while `cmd` runs on the caller's console, then idle (exit 0) or a Failed
+    /// line. Returns the program's exit code.
+    pub fn wrap(status: &Path, name: &str, line: &str, cmd: &[String], opts: &LineOpts) -> Result<i32, String> {
+        use std::os::windows::process::CommandExt;
+        use windows_sys::Win32::System::Console::{AttachConsole, GetStdHandle, SetConsoleCtrlHandler, ATTACH_PARENT_PROCESS, STD_OUTPUT_HANDLE};
+        let has_out = || unsafe {
+            let h = GetStdHandle(STD_OUTPUT_HANDLE);
+            !h.is_null() && h != INVALID_HANDLE_VALUE
+        };
+        // the program prints to the caller's console; with no console at all it gets no window either
+        let console = has_out() || unsafe { AttachConsole(ATTACH_PARENT_PROCESS) } != 0;
+        // Ctrl+C stops the program, not the wrapper, so the line is still set right afterwards
+        unsafe { SetConsoleCtrlHandler(None, 1) };
+        say_line(status, Some(name), line, opts)?;
+        wake(status);
+        let mut c = std::process::Command::new(&cmd[0]);
+        c.args(&cmd[1..]);
+        if !console {
+            c.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        }
+        let code = match c.status() {
+            Ok(st) => st.code(),
+            Err(e) => {
+                sessions::say(status, name, &format!("Failed: could not start {} ({e})", cmd[0]))?;
+                return Err(format!("could not start {}: {e}", cmd[0]));
+            }
+        };
+        // 0xC000013A: the program was stopped with Ctrl+C
+        let code = code.filter(|c| *c as u32 != 0xC000_013A);
+        match code {
+            Some(0) => sessions::idle(status, name)?,
+            other => sessions::say(status, name, &wrap_failed(line, other))?,
+        }
+        Ok(code.unwrap_or(1))
+    }
+
+    static STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    unsafe extern "system" fn on_ctrl(_: u32) -> windows_sys::core::BOOL {
+        STOP.store(true, std::sync::atomic::Ordering::SeqCst);
+        1
+    }
+
+    /// `watch` and `wrap --pid`: keep session `name`'s line current until the process ends (`pid`), Ctrl+C, or
+    /// someone sends `idle` for the session. With a log, progress (and with `tail` the newest line) come from it.
+    /// Every write lasts 60 s (`until`), so a watcher that dies cannot leave its line up. Returns the exit code to
+    /// pass on (the process's own when it is known).
+    pub fn watch(status: &Path, name: &str, line: &str, log: Option<(PathBuf, Option<String>, bool)>, base: &LineOpts, pid: Option<u32>) -> Result<i32, String> {
+        use std::sync::atomic::Ordering;
+        use windows_sys::Win32::System::Console::{AttachConsole, SetConsoleCtrlHandler, ATTACH_PARENT_PROCESS};
+        use windows_sys::Win32::System::Threading::{GetExitCodeProcess, OpenProcess, WaitForSingleObject};
+        unsafe {
+            AttachConsole(ATTACH_PARENT_PROCESS);
+            SetConsoleCtrlHandler(Some(on_ctrl), 1);
+        }
+        // SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION: enough to wait on it and read its exit code
+        let proc = match pid {
+            Some(p) => {
+                let h = unsafe { OpenProcess(0x0010_0000 | 0x1000, 0, p) };
+                if h.is_null() {
+                    return Err(format!("no process {p} to watch (ended, or not ours to see)"));
+                }
+                Some(h)
+            }
+            None => None,
+        };
+        let (mut tail, matching, show) = match log {
+            Some((p, m, show)) => (Some(watch::Tail::new(p, false)), m, show),
+            None => (None, None, false),
+        };
+        let (mut last, mut progress) = (None::<String>, None::<sessions::Progress>);
+        let (mut written, mut wrote_at) = (String::new(), 0.0);
+        let file = sessions::file(status, name);
+        let mut first = true;
+        let result = loop {
+            if let Some(t) = tail.as_mut() {
+                for l in t.read() {
+                    if matching.as_deref().is_none_or(|m| l.contains(m)) {
+                        if let Some(p) = watch::progress_in(&l) {
+                            progress = Some(p);
+                        }
+                        last = Some(l);
+                    }
+                }
+            }
+            // someone said idle for this session: the watching ends
+            if !first && !file.exists() {
+                break Ok(0);
+            }
+            let text = watch::line_text(line, show, last.as_deref());
+            let mut opts = base.clone();
+            opts.progress = progress.clone().or(base.progress.clone());
+            opts.for_secs = Some(60.0);
+            let now = sessions::now();
+            let what = format!("{text}\n{:?}", opts.progress.as_ref().map(|p| &p.label));
+            if what != written || now - wrote_at > 20.0 {
+                say_line(status, Some(name), &text, &opts)?;
+                if first {
+                    wake(status);
+                    first = false;
+                }
+                written = what;
+                wrote_at = now;
+            }
+            if STOP.load(Ordering::SeqCst) {
+                sessions::idle(status, name)?;
+                break Ok(130);
+            }
+            match proc {
+                Some(h) if unsafe { WaitForSingleObject(h, 2000) } == 0 => {
+                    let mut code = 0u32;
+                    let known = unsafe { GetExitCodeProcess(h, &mut code) } != 0;
+                    let code = code as i32;
+                    if !known || code == 0 {
+                        sessions::idle(status, name)?;
+                    } else {
+                        let failed = if code as u32 == 0xC000_013A { wrap_failed(line, None) } else { wrap_failed(line, Some(code)) };
+                        sessions::say(status, name, &failed)?;
+                    }
+                    break Ok(if known { code } else { 0 });
+                }
+                Some(_) => {}
+                None => {
+                    for _ in 0..20 {
+                        if STOP.load(Ordering::SeqCst) {
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    }
+                }
+            }
+        };
+        if let Some(h) = proc {
+            unsafe { CloseHandle(h) };
+        }
+        result
+    }
+
+    /// `watch --background`: the same command again, without `--background` and with the session named, as a
+    /// process of its own with no window; this one returns at once.
+    pub fn detach(name: &str) -> Result<(), String> {
+        use std::os::windows::process::CommandExt;
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        keep_pipes();
+        let mut args: Vec<String> = std::env::args().skip(1).filter(|a| a != "--background").collect();
+        if !args.iter().any(|a| a == "--session") {
+            args.extend(["--session".to_string(), name.to_string()]);
+        }
+        let child = std::process::Command::new(exe)
+            .args(&args)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .creation_flags(0x0000_0008 | 0x0800_0000) // DETACHED_PROCESS | CREATE_NO_WINDOW
+            .spawn()
+            .map_err(|e| format!("could not start the watcher: {e}"))?;
+        print(&format!("watching in the background (process {}); stop it with: kitten-assistant idle --session \"{name}\"", child.id()));
+        Ok(())
+    }
+
+    /// Files a click may open with their own app; anything else is only shown in Explorer, never run.
+    const OPENABLE: [&str; 13] = ["log", "txt", "md", "json", "csv", "xml", "yaml", "yml", "ini", "html", "htm", "png", "pdf"];
+
+    /// A bubble's `--open`: a web page in the browser, a folder in Explorer, a log or text file in its app, any other
+    /// file selected in Explorer.
+    pub fn open_target(target: &str) {
+        use windows_sys::Win32::UI::Shell::ShellExecuteW;
+        let t = target.trim();
+        let lower = t.to_ascii_lowercase();
+        let p = Path::new(t);
+        let (file, params) = if lower.starts_with("https://") || lower.starts_with("http://") {
+            (t.to_string(), None)
+        } else if p.is_dir() {
+            (t.to_string(), None)
+        } else if p.is_file() && p.extension().is_some_and(|e| OPENABLE.contains(&e.to_string_lossy().to_ascii_lowercase().as_str())) {
+            (t.to_string(), None)
+        } else if p.exists() {
+            ("explorer.exe".to_string(), Some(format!("/select,\"{t}\"")))
+        } else {
+            log(&format!("open: nothing at {t}"));
+            return;
+        };
+        let (verb, file) = (wide("open"), wide(&file));
+        let params = params.map(|s| wide(&s));
+        unsafe {
+            ShellExecuteW(null_mut(), verb.as_ptr(), file.as_ptr(), params.as_ref().map_or(null(), |p| p.as_ptr()), null(), SW_SHOWNORMAL);
+        }
+    }
+
+    /// The caller's pipes must not leak into a process that outlives this call (the kitten, a background watcher), or
+    /// `... | Out-Null` waits until that process ends.
+    fn keep_pipes() {
+        use windows_sys::Win32::System::Console::{GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE};
+        for which in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+            unsafe {
+                let h = GetStdHandle(which);
+                if !h.is_null() && h != INVALID_HANDLE_VALUE {
+                    SetHandleInformation(h, HANDLE_FLAG_INHERIT, 0);
+                }
+            }
         }
     }
 
@@ -531,6 +1125,18 @@ mod win {
         first_poll: bool,
         last_frame: Vec<u8>,
         last_status: String,
+        /// the shown line (session and text) and what a click on its bubble opens
+        shown: Option<String>,
+        open: Option<String>,
+        /// lines whose `--attention` was clicked away
+        acked: std::collections::HashSet<String>,
+        /// the shown line's progress when first seen (line, time, fraction), for the time-left estimate
+        eta_from: Option<(String, f64, f32)>,
+        /// the timers' lines (name -> text, end time), to cheer when one runs out
+        timers: std::collections::HashMap<String, (String, f64)>,
+        history: history::Tracker,
+        /// the line a sound was last played for
+        sounded: Option<String>,
     }
 
     thread_local! {
@@ -583,20 +1189,23 @@ mod win {
             let t = self.t();
             self.first_poll = false;
             // every program's line: the one that matters most shows, its own age keeps the bubble's clock honest
-            let lines = sessions::read_all(&self.status, read_status, status_age);
+            let lines = sessions::read_all(&self.status, read_status, status_age, sessions::now());
             let (status, age, others) = match sessions::pick(&lines) {
                 Some((l, n)) => (l.text.clone(), l.age, n),
                 None => (String::from("idle"), 0.0, 0),
             };
+            self.scene.progress = sessions::pick(&lines).and_then(|(l, _)| l.meta.progress.as_ref()).map(|p| (p.frac, p.label.clone()));
             self.scene.others = others;
             // the other lines, newest first, for the bubble's "+N more" rotation
             let top = sessions::pick(&lines).map(|(l, _)| l.clone());
             let mut rest: Vec<&sessions::Line> = lines.iter().filter(|l| Some(*l) != top.as_ref()).collect();
             rest.sort_by(|a, b| a.age.total_cmp(&b.age));
             self.scene.other_lines = rest.into_iter().map(|l| (l.name.clone(), l.text.clone())).collect();
-            self.scene.set_status_aged(&status, t, age);
+            self.scene.set_status_mood(&status, t, age, top.as_ref().and_then(|l| l.meta.mood));
             self.scene.auto_rotate(t);
             self.last_status = status;
+            self.extras(&lines, top.as_ref(), t);
+            sessions::sweep(&self.status, sessions::now());
             // a gentle frame rate whatever has the focus: smooth enough while typing, lighter while napping
             let ms = if self.scene.busy { 33 } else { 66 };
             if ms != self.frame_ms {
@@ -604,6 +1213,78 @@ mod win {
                 // a little slack lets Windows fold the tick into other wake-ups
                 unsafe { SetCoalescableTimer(self.hwnd, FRAME, ms, None, ms / 8) };
             }
+        }
+
+        /// The shown line's checklist, hop, link, timer and time left; timers that ran out; the history; the sound.
+        fn extras(&mut self, lines: &[sessions::Line], top: Option<&sessions::Line>, t: f64) {
+            let now = sessions::now();
+            let key = top.map(|l| format!("{}\n{}", l.name, l.text));
+            self.scene.steps = top.filter(|l| !l.meta.steps.is_empty()).map(|l| {
+                let n = l.meta.steps.len();
+                (l.meta.steps.clone(), l.meta.step.unwrap_or(1).clamp(1, n) - 1)
+            });
+            self.scene.attention = top.is_some_and(|l| l.meta.attention) && key.as_ref().is_some_and(|k| !self.acked.contains(k));
+            self.open = top.and_then(|l| l.meta.open.clone());
+            self.scene.clickable = self.scene.attention || self.open.is_some();
+            self.scene.countdown_end = top.filter(|l| l.meta.countdown).and_then(|l| l.meta.until).map(|u| t + (u - now));
+            // time left: from how far the progress moved since the line was first seen
+            let progress = top.and_then(|l| l.meta.progress.as_ref()).map(|p| p.frac);
+            self.scene.eta = match (&key, progress) {
+                (Some(k), Some(f)) => match &self.eta_from {
+                    Some((k0, t0, f0)) if k0 == k && f >= *f0 => sessions::eta(*t0, *f0 as f64, t, f as f64),
+                    _ => {
+                        self.eta_from = Some((k.clone(), t, f));
+                        None
+                    }
+                },
+                _ => {
+                    self.eta_from = None;
+                    None
+                }
+            };
+            // a timer that ran out (not one stopped early) gets its cheer
+            let live: std::collections::HashMap<String, (String, f64)> = lines
+                .iter()
+                .filter(|l| l.meta.countdown)
+                .filter_map(|l| l.meta.until.map(|u| (l.name.clone(), (l.text.clone(), u))))
+                .collect();
+            for (name, (text, until)) in std::mem::take(&mut self.timers) {
+                if !live.contains_key(&name) && now >= until - 3.0 {
+                    self.scene.cheer_now(t, Some(&format!("{text}: time's up!")));
+                }
+            }
+            self.timers = live;
+            if setting("history").as_deref() == Some("1") {
+                let rows = self.history.update(lines, now);
+                if let Err(e) = history::append(&history::path(&self.status), &rows) {
+                    log(&format!("history: {e}"));
+                }
+            } else {
+                self.history = Default::default();
+            }
+            // a sound when a problem or a question becomes the shown line (right-click > Sounds)
+            if key != self.sounded {
+                if let Some(l) = top.filter(|_| setting("sound").as_deref() == Some("1")) {
+                    match l.mood() {
+                        scene::Mood::Problem => unsafe { windows_sys::Win32::System::Diagnostics::Debug::MessageBeep(MB_ICONEXCLAMATION) },
+                        scene::Mood::Question => unsafe { windows_sys::Win32::System::Diagnostics::Debug::MessageBeep(MB_ICONASTERISK) },
+                        _ => 1,
+                    };
+                }
+                self.sounded = key.clone();
+            }
+            self.shown = key;
+        }
+
+        /// The bubble was clicked: its hop stops for this line, and its link opens (handed back, to open outside the
+        /// app's borrow).
+        fn click_bubble(&mut self) -> Option<String> {
+            if let Some(k) = &self.shown {
+                self.acked.insert(k.clone());
+            }
+            self.scene.attention = false;
+            self.scene.clickable = self.open.is_some();
+            self.open.clone()
         }
 
         /// Hand the frame to Windows as a per-pixel-alpha layered window, as cheaply as possible:
@@ -735,12 +1416,12 @@ mod win {
         std::env::current_exe().ok()?.parent().map(|d| d.join("kitten-assistant.ini"))
     }
 
-    fn setting(key: &str) -> Option<String> {
+    pub(crate) fn setting(key: &str) -> Option<String> {
         let text = std::fs::read_to_string(settings_path()?).ok()?;
         text.lines().find_map(|l| l.trim().strip_prefix(key)?.trim_start().strip_prefix('=').map(|v| v.trim().to_string()))
     }
 
-    fn save_setting(key: &str, value: &str) {
+    pub(crate) fn save_setting(key: &str, value: &str) {
         write_setting(key, Some(value));
     }
 
@@ -860,6 +1541,8 @@ mod win {
             default_size: (format!("Default ({}%)", (dpi_scale() * 100.0).round()), auto),
             sizes: SIZES.iter().map(|s| (format!("{}%", (s * 100.0).round()), !auto && (s - sc_now).abs() < 0.005)).collect(),
             topmost: topmost(),
+            sound: setting("sound").as_deref() == Some("1"),
+            history: setting("history").as_deref() == Some("1"),
         };
         let sc = dpi_scale();
         let Some(m) = menu::Menu::new(info, sc) else { return };
@@ -1024,6 +1707,23 @@ mod win {
         }
     }
 
+    /// Right-click > What ran today: today's history as a text file, opened in Notepad.
+    fn show_today() {
+        let status = APP.with(|a| a.try_borrow().ok().and_then(|g| g.as_ref().map(|app| app.status.clone())));
+        let Some(status) = status else { return };
+        let rows = history::read(&history::path(&status));
+        let mut text = format!("Kitten Assistant: what ran today\r\n\r\n{}\r\n", history::summary(&rows, history::local_midnight(sessions::now(), 0)).replace('\n', "\r\n"));
+        if setting("history").as_deref() != Some("1") {
+            text += "\r\nThe history is off: right-click the kitten > Keep a history to turn it on.\r\n";
+        }
+        let p = std::env::temp_dir().join("kitten-assistant-today.txt");
+        if let Err(e) = std::fs::write(&p, text) {
+            log(&format!("today: {e}"));
+            return;
+        }
+        let _ = std::process::Command::new("notepad.exe").arg(&p).spawn();
+    }
+
     /// What a menu pick does.
     unsafe fn apply_menu(hwnd: HWND, act: menu::Action) {
         match act {
@@ -1033,6 +1733,15 @@ mod win {
                 save_setting("always_on_top", if on { "0" } else { "1" });
                 apply_topmost(hwnd, !on);
             }
+            menu::Action::Sound => {
+                let on = setting("sound").as_deref() == Some("1");
+                save_setting("sound", if on { "0" } else { "1" });
+            }
+            menu::Action::History => {
+                let on = setting("history").as_deref() == Some("1");
+                save_setting("history", if on { "0" } else { "1" });
+            }
+            menu::Action::Today => show_today(),
             menu::Action::CheckUpdate => check_from_menu(hwnd),
             menu::Action::Quit => {
                 close_menu_now();
@@ -1085,7 +1794,15 @@ mod win {
                 }
                 let mut p = POINT { x: (lp & 0xFFFF) as i16 as i32, y: ((lp >> 16) & 0xFFFF) as i16 as i32 };
                 ScreenToClient(hwnd, &mut p);
-                let more = APP.with(|a| a.try_borrow().ok().and_then(|g| g.as_ref().map(|app| app.scene.more_hit(p.x as f32 / app.sc, p.y as f32 / app.sc))))
+                let more = APP
+                    .with(|a| {
+                        a.try_borrow().ok().and_then(|g| {
+                            g.as_ref().map(|app| {
+                                let (x, y) = (p.x as f32 / app.sc, p.y as f32 / app.sc);
+                                app.scene.more_hit(x, y) || app.scene.bubble_hit(x, y)
+                            })
+                        })
+                    })
                     .unwrap_or(false);
                 if more { HTCLIENT as LRESULT } else { HTCAPTION as LRESULT }
             }
@@ -1094,10 +1811,20 @@ mod win {
                 1
             }
             WM_LBUTTONUP => {
+                let (x, y) = ((lp & 0xFFFF) as i16 as f32, ((lp >> 16) & 0xFFFF) as i16 as f32);
+                let mut open = None;
                 with_app(|a| {
                     let t = a.t();
-                    a.scene.click_more(t);
+                    let (sx, sy) = (x / a.sc, y / a.sc);
+                    if a.scene.more_hit(sx, sy) {
+                        a.scene.click_more(t);
+                    } else if a.scene.bubble_hit(sx, sy) {
+                        open = a.click_bubble();
+                    }
                 });
+                if let Some(target) = open {
+                    open_target(&target);
+                }
                 0
             }
             WM_NCLBUTTONDBLCLK => 0,
@@ -1131,6 +1858,36 @@ mod win {
                     a.scene.show_up_to_date(t);
                 });
                 0
+            }
+            // `do ACTION [TEXT]` from another program: dwData is the action, the data its text (UTF-8)
+            WM_COPYDATA => {
+                use windows_sys::Win32::System::DataExchange::COPYDATASTRUCT;
+                let cd = &*(lp as *const COPYDATASTRUCT);
+                if cd.dwData < ACTIONS.len() && cd.cbData <= 4096 {
+                    let bytes = if cd.lpData.is_null() || cd.cbData == 0 {
+                        &[][..]
+                    } else {
+                        std::slice::from_raw_parts(cd.lpData as *const u8, cd.cbData as usize)
+                    };
+                    let text = String::from_utf8_lossy(bytes).trim().to_string();
+                    let text = (!text.is_empty()).then_some(text.as_str());
+                    let action = ACTIONS[cd.dwData];
+                    with_app(|a| {
+                        let t = a.t();
+                        match action {
+                            "sip" => a.scene.brain.force(brain::Event::Sip, t),
+                            "refill" => a.scene.brain.force(brain::Event::Refill, t),
+                            "stretch" => a.scene.brain.force(brain::Event::Stretch, t),
+                            "yawn" => a.scene.brain.force(brain::Event::Yawn, t),
+                            "look" => a.scene.brain.force(brain::Event::LookAround, t),
+                            "wave" => a.scene.wave(t, text),
+                            _ => a.scene.cheer_now(t, text),
+                        }
+                    });
+                    1
+                } else {
+                    0
+                }
             }
             WM_DESTROY => {
                 PostQuitMessage(0);
@@ -1347,7 +2104,23 @@ mod win {
                 first_poll: true,
                 last_frame: Vec::new(),
                 last_status: String::new(),
+                shown: None,
+                open: None,
+                acked: Default::default(),
+                eta_from: None,
+                timers: Default::default(),
+                history: Default::default(),
+                sounded: None,
             };
+            if setting("history").as_deref() == Some("1") {
+                history::trim(&history::path(&app.status), sessions::now());
+            }
+            // the local endpoint, when asked for (off by default)
+            if let Some(addr) = o.listen.clone().or_else(|| setting("listen")).filter(|a| !a.is_empty()) {
+                if let Err(e) = listen::start(&addr, app.status.clone()) {
+                    log(&e);
+                }
+            }
             app.poll();
             app.frame();
             APP.with(|a| *a.borrow_mut() = Some(app));
@@ -1369,5 +2142,42 @@ mod win {
             }
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn json_strings_escape_what_json_needs() {
+        assert_eq!(json_str("a \"b\" \\ c\n\t\u{1}"), r#""a \"b\" \\ c\n\t\u0001""#);
+        assert_eq!(json_str("caf\u{e9} \u{b7}"), "\"caf\u{e9} \u{b7}\"");
+    }
+
+    #[test]
+    fn status_json_lists_the_shown_line_first() {
+        let line = |name: &str, text: &str, meta| sessions::Line { name: name.into(), text: text.into(), age: 12.4, meta };
+        let lines = [
+            line("ci", "Failed: tests", sessions::Meta::default()),
+            line("", "Copying: photos", sessions::Meta { until: Some(160.0), progress: sessions::Progress::parse("3/10"), ..Default::default() }),
+        ];
+        assert_eq!(
+            status_json(&lines, 100.0),
+            concat!(
+                r#"{"idle":false,"lines":[{"session":"ci","text":"Failed: tests","mood":"problem","age_secs":12,"progress":null,"#,
+                r#""progress_label":null,"expires_in_secs":null,"shown":true},{"session":null,"text":"Copying: photos","#,
+                r#""mood":"downloading","age_secs":12,"progress":0.300,"progress_label":"3/10","expires_in_secs":60,"shown":false}]}"#
+            )
+        );
+        assert_eq!(status_json(&[], 0.0), r#"{"idle":true,"lines":[]}"#);
+    }
+
+    #[test]
+    fn a_failed_wrap_says_what_failed() {
+        assert_eq!(wrap_failed("Building: the app", Some(2)), "Failed: the app (exit 2)");
+        assert_eq!(wrap_failed("Running: cargo test", Some(101)), "Failed: Running: cargo test (exit 101)");
+        assert_eq!(wrap_failed("Testing: suite", None), "Failed: suite (canceled)");
+        assert_eq!(wrap_failed("Note: x", Some(1)), "Failed: Note: x (exit 1)");
     }
 }
