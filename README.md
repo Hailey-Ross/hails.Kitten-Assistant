@@ -94,6 +94,21 @@ These print their errors and exit with 1 instead of opening a message box. The f
 - The bubble's timer starts again whenever the text changes. Saying the same line again keeps the count going.
 - Short lines read best (about 50 characters fit; keep to two lines, longer text may overfill, then is cut). Put the useful words first.
 - **In PowerShell, add `| Out-Null`** (`kitten-assistant say "Backup" | Out-Null`), or the next line of your script can run before the status is written.
+- Several programs can share one kitten: give each its own `--session NAME` (or the `KITTEN_SESSION` environment variable) on every `say` and `idle`, and each gets its own line. The kitten shows the one that matters most (problems and questions first, then work, then waiting) with "+N more", and `idle --session NAME` removes only that line.
+
+### With agentMon
+
+[agentMon](https://github.com/Hailey-Ross/hails.agentMon) is a desktop widget that shows what every AI agent on your PC is doing. When Kitten Assistant is installed in its usual place (`%LOCALAPPDATA%\KittenAssistant`), agentMon picks it up by itself; there's nothing to set up. It reads `kitten-assistant status --json` whenever the status files change (and every 30 seconds for lines that expire), and shows each busy line with its mood, progress bar and time left:
+
+- **On the right project and session.** agentMon matches a line to a project and an agent session by its session name, so name sessions after the project and the task: `--session "my-project build"`. A word that also appears in the agent session's name or worktree ties the line to that session. A line without a session name shows up as "shared line, any session".
+- **Questions and problems go to the top.** A `Question: ...` line (or `--mood question`) shows up as "Asking you" in agentMon's list of things to look at, and `Failed` / `Problem` lines show up there in red. `Waiting` lines count as waiting on purpose, so the session isn't flagged as stuck.
+- **Progress.** `--progress` fills a bar under the session, with agentMon's own estimate of the time left.
+
+Together with agentMon's build gate (`agentmon-run`), a long build can show its line and wait its turn in one command:
+
+```powershell
+kitten-assistant wrap --session "my-project build" --line "Building: release" -- agentmon-run -- cargo build --release | Out-Default
+```
 
 > **Never start a status with `--`.** Anything starting with `--` is read as an option, even inside quotes and even after `say`. `kitten-assistant "--check-assets hang"` is an unknown option: the status is not written, and an error message box opens and keeps the call (and any script waiting on it) stuck until someone clicks OK. Put a word in front instead: `kitten-assistant "Check: --check-assets hang"`.
 
