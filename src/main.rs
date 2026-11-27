@@ -40,7 +40,8 @@ kitten-assistant history              what ran today and for how long (history o
 kitten-assistant quit                close a running kitten
 kitten-assistant snapshot out.png     render one frame to a PNG
 kitten-assistant update               check for a newer stable release now and install it
-kitten-assistant version              show the version
+kitten-assistant version              print the version (also --version)
+kitten-assistant help                 print this text (also --help, -h, /?, or --help after any command)
 
 options:
   --status FILE    status file (default: status.txt next to the exe, or %KITTEN_STATUS%)
@@ -188,7 +189,15 @@ fn parse() -> Result<Opts, String> {
                 o.rest = it.by_ref().collect();
                 break;
             }
-            "-h" | "--help" | "help" => return Err(USAGE.into()),
+            // anywhere on the line (`say --help` too): print the usage, never a message box
+            "-h" | "-?" | "/?" | "/h" | "-help" | "--help" | "/help" | "--usage" => {
+                o.cmd = "help".into();
+                return Ok(o);
+            }
+            "-V" | "-v" | "-version" | "--version" => {
+                o.cmd = "version".into();
+                return Ok(o);
+            }
             _ if a.starts_with("--") => return Err(format!("unknown option {a}\n\n{USAGE}")),
             _ => positional.push(a),
         }
@@ -385,8 +394,9 @@ fn main() {
             std::process::exit(1);
         }
         Err(e) => {
-            win::message(&e);
-            return;
+            log(&e);
+            win::tell(&format!("kitten-assistant: {e}"));
+            std::process::exit(1);
         }
     };
     let status = status_path(&o);
@@ -441,7 +451,9 @@ fn main() {
                 }
                 Ok(())
             }
-            Some("clear") => sessions::clear_all(&status).map(|n| win::print(&format!("cleared {n} session line(s)"))),
+            Some("clear") => sessions::clear_all(&status).map(|n| {
+                win::print(&format!("cleared {n} session line(s)"));
+            }),
             Some(other) => Err(format!("sessions: unknown `{other}` (try `sessions` or `sessions clear`)")),
         },
         "do" => {
@@ -567,7 +579,11 @@ fn main() {
         "snapshot" => snapshot(&o),
         "update" => win::update_now(),
         "version" => {
-            win::message(&format!("Kitten Assistant {}", update::label()));
+            win::tell(&format!("Kitten Assistant {}", update::label()));
+            Ok(())
+        }
+        "help" => {
+            win::tell(USAGE);
             Ok(())
         }
         // A status line passed without `say` (`kitten-assistant "Building"`) is taken as one: no message box, which
@@ -587,7 +603,8 @@ fn main() {
             win::print(&format!("kitten-assistant: {e}"));
             std::process::exit(1);
         }
-        win::message(&e);
+        win::tell(&format!("kitten-assistant: {e}"));
+        std::process::exit(1);
     }
 }
 
@@ -836,9 +853,18 @@ mod win {
         unsafe { MessageBoxW(null_mut(), t.as_ptr(), c.as_ptr(), MB_OK) };
     }
 
+    /// `text` to stdout (see `print`), or in a message box when there is no console or pipe at all (a shortcut, a
+    /// double-click): a program or an agent calling the exe never gets a window it has to click away.
+    pub fn tell(text: &str) {
+        if !print(text) {
+            message(text);
+        }
+    }
+
     /// One line to stdout. The exe is a windowed app: piped or captured output (scripts, `$x = ...`, Git Bash) has a
-    /// stdout to write to; run straight in a console it has none, so it borrows the parent's console.
-    pub fn print(text: &str) {
+    /// stdout to write to; run straight in a console it has none, so it borrows the parent's console. False when
+    /// there was nowhere to write.
+    pub fn print(text: &str) -> bool {
         use std::io::Write;
         use windows_sys::Win32::System::Console::{AttachConsole, GetStdHandle, ATTACH_PARENT_PROCESS, STD_OUTPUT_HANDLE};
         let has_out = || unsafe {
@@ -849,8 +875,12 @@ mod win {
             let mut out = std::io::stdout();
             let _ = writeln!(out, "{text}");
             let _ = out.flush();
+            true
         } else if let Ok(mut con) = std::fs::OpenOptions::new().write(true).open("CONOUT$") {
             let _ = writeln!(con, "{text}");
+            true
+        } else {
+            false
         }
     }
 
